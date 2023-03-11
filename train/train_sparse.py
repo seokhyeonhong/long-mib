@@ -38,7 +38,7 @@ if __name__ == "__main__":
     # model
     print("Initializing model...")
     model = SparseTransformer(dataset.shape[-1], config).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=config.lr, betas=(0.9, 0.98), eps=1e-9)
+    optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
     init_iter = iter
@@ -58,12 +58,10 @@ if __name__ == "__main__":
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
-        max_transition = 30
-        # max_transition = min(config.min_transition + epoch, config.max_transition)
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             B, T, D = GT_motion.shape
 
-            transition_frames = random.randint(config.min_transition, max_transition)
+            transition_frames = random.randint(config.min_transition, config.max_transition)
             T = config.context_frames + transition_frames + 1
             GT_motion = GT_motion[:, :T, :]
 

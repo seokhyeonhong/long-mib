@@ -40,18 +40,18 @@ class SparseRelativeMultiHeadAttention(nn.Module):
             Q = self.layer_norm(Q)
 
         # linear projection to
-        Q = self.W_q(Q) # (B, T1, n_head*d_head)
-        K = self.W_k(K) # (B, T2, n_head*d_head)
-        V = self.W_v(V) # (B, T2, n_head*d_head)
+        q = self.W_q(Q) # (B, T1, n_head*d_head)
+        k = self.W_k(K) # (B, T2, n_head*d_head)
+        v = self.W_v(V) # (B, T2, n_head*d_head)
 
         # split heads
-        Q = Q.view(B, T1, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T1, d_head)
-        K = K.view(B, T2, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T2, d_head)
-        V = V.view(B, T2, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T2, d_head)
+        q = q.view(B, T1, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T1, d_head)
+        k = k.view(B, T2, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T2, d_head)
+        v = v.view(B, T2, self.n_head, self.d_head).transpose(1, 2) # (B, n_head, T2, d_head)
 
         # attention score
-        atten_score = torch.matmul(Q, K.transpose(-2, -1)) # (B, n_head, T1, T2)
-        rel_atten_score = self.skew(torch.matmul(Q, lookup_table.transpose(-2, -1))) # (B, n_head, T1, T1)
+        atten_score = torch.matmul(q, k.transpose(-2, -1)) # (B, n_head, T1, T2)
+        rel_atten_score = self.skew(torch.matmul(q, lookup_table.transpose(-2, -1))) # (B, n_head, T1, T1)
         rel_atten_score = rel_atten_score[..., valid_frames]
         atten_score = (atten_score + rel_atten_score) * self.atten_scale # TODO: Fix this line for atten_score and rel_atten_score are not the same shape
 
@@ -60,16 +60,16 @@ class SparseRelativeMultiHeadAttention(nn.Module):
 
         # attention
         attention = F.softmax(atten_score, dim=-1)
-        attention = torch.matmul(attention, V).transpose(1, 2).contiguous().view(B, -1, self.n_head * self.d_head) # (B, T1, n_head*d_head)
+        attention = torch.matmul(attention, v).transpose(1, 2).contiguous().view(B, -1, self.n_head * self.d_head) # (B, T1, n_head*d_head)
 
         # output
-        out = self.W_out(attention) # (B, T1, d_model)
-        out = self.dropout(out)
+        output = self.W_out(attention) # (B, T1, d_model)
+        output = self.dropout(output)
         
         if self.pre_layernorm:
-            return out + attention
+            return Q + output
         else:
-            return self.layer_norm(out + attention)
+            return self.layer_norm(Q + output)
         
 def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
     B, T, D = batch.shape
@@ -81,7 +81,7 @@ def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5)
     # mask out random partial frames
     constrained_frames = np.arange(context_frames, T-1)
     constrained_frames = np.random.choice(constrained_frames, int(len(constrained_frames) * ratio_constrained), replace=False)
-    constrained_frames = np.sort(constrained_frames)
+    # constrained_frames = np.sort(constrained_frames)
     for t in constrained_frames:
         if np.random.rand() < prob_constrained:
             batch_mask[:, t, :] = 1
@@ -171,7 +171,8 @@ class SparseTransformer(nn.Module):
         rel_dist = torch.arange(-T+1, T, dtype=torch.float32).to(x.device) # (2T-1)
         lookup_table = self.relative_pos_encoder(rel_dist.unsqueeze(-1)) # (2T-1, d_model)
 
-        constrained_frames = np.concatenate([np.arange(self.config.context_frames), constrained_frames, np.arange(T-1, T)])
+        # constrained_frames = np.concatenate([np.arange(self.config.context_frames), constrained_frames, np.arange(T-1, T)])
+        constrained_frames = np.concatenate([np.arange(self.config.context_frames), np.arange(T-1, T)])
 
         # Transformer encoder layers
         for i in range(self.n_layers):

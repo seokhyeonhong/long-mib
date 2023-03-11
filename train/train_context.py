@@ -58,12 +58,10 @@ if __name__ == "__main__":
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
-        max_transition = 30
-        # max_transition = min(config.min_transition + epoch, config.max_transition)
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             B, T, D = GT_motion.shape
 
-            transition_frames = random.randint(config.min_transition, max_transition)
+            transition_frames = random.randint(config.min_transition, config.max_transition)
             T = config.context_frames + transition_frames + 1
             GT_motion = GT_motion[:, :T, :]
 
