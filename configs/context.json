@@ -12,10 +12,10 @@
     "contact_joint_names": ["LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"],
     "vel_threshold": 2e-4,
 
-    "log_dir": "log",
+    "log_dir": "log/DetailTransformer",
     "log_interval": 100,
 
-    "save_dir": "save",
+    "save_dir": "save/ContextTransformer",
     "save_interval": 10000,
 
     "batch_size": 64,
