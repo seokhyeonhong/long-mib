@@ -110,8 +110,8 @@ class ContextTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = x + self.atten_layers[i](x, x, x, lookup_table, mask=atten_mask) # self-attention
-            x = x + self.pffn_layers[i](x)
+            x = self.atten_layers[i](x, context=x, lookup_table=lookup_table, mask=atten_mask) # self-attention
+            x = self.pffn_layers[i](x)
         
         # decoder
         if self.pre_layernorm:
