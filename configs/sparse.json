@@ -1,0 +1,37 @@
+{
+    "dataset_dir": "dataset",
+
+    "window_length": 200,
+    "window_offset": 20,
+    "fps": 30,
+    "context_frames": 10,
+    "v_forward": [0, 0, 1],
+    "v_up": [0, 1, 0],
+    "vel_scales": [0.8, 0.9, 1.0, 1.1, 1.2],
+    
+    "contact_joint_names": ["LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"],
+    "vel_threshold": 2e-4,
+
+    "log_dir": "log/SparseTransformer",
+    "log_interval": 100,
+
+    "save_dir": "save/SparseTransformer",
+    "save_interval": 10000,
+
+    "batch_size": 64,
+    "epochs": 1000,
+    "warmup_iters": 8000,
+    "min_transition": 5,
+    "max_transition": 180,
+
+    "dropout": 0.0,
+    "n_layers": 6,
+    "n_heads": 8,
+    "d_model": 512,
+    "d_ff": 2048,
+    "pre_layernorm": true,
+
+    "weight_rot": 1.0,
+    "weight_pos": 1.0,
+    "weight_vel": 0.5
+}

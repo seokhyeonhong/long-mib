@@ -1,0 +1,11 @@
+# directories
+__pycache__/
+log/
+save/
+
+# file types
+*.pkl
+*.fbx
+*.npy
+*.pt
+*.pth
