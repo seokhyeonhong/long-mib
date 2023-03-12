@@ -110,7 +110,7 @@ class ContextTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, context=x, lookup_table=lookup_table, mask=atten_mask) # self-attention
+            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=atten_mask) # self-attention
             x = self.pffn_layers[i](x)
         
         # decoder
@@ -178,14 +178,14 @@ class DetailTransformer(nn.Module):
             nn.Linear(self.d_model, self.d_motion + 4),
         )
     
-    def forward(self, x, batch_mask, context_frames):
+    def forward(self, x, batch_mask):
         B, T, D = x.shape
         
         # mask
         x = self.encoder(torch.cat([x, batch_mask], dim=-1))
 
         # add keyframe positional embedding
-        keyframe_pos = get_keyframe_relative_position(T, context_frames).to(x.device)
+        keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
@@ -194,8 +194,8 @@ class DetailTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = x + self.atten_layers[i](x, lookup_table, mask=None)
-            x = x + self.pffn_layers[i](x)
+            x = self.atten_layers[i](x, x, lookup_table, mask=None)
+            x = self.pffn_layers[i](x)
         
         # decoder
         if self.pre_layernorm:

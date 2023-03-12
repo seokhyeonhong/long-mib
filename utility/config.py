@@ -10,7 +10,7 @@ class Config(dict):
     __setattr__ = dict.__setitem__
 
     @classmethod
-    def load(cls, path, postfix=None):
+    def load(cls, path):
         """
         Load config from json file and convert to Config object
         
@@ -38,7 +38,7 @@ class Config(dict):
         config.testset_npy  = f"{config.testset_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
 
         # directories to save and log training
-        postfix = datetime.strftime(datetime.now(), "%Y-%m-%d-%H-%M-%S") if postfix is None else postfix
+        postfix = f"transition{config.min_transition}-{config.max_transition}"
         config.log_dir  = os.path.join(config.log_dir, postfix)
         config.save_dir = os.path.join(config.save_dir, postfix)
 

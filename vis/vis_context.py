@@ -11,18 +11,18 @@ from tqdm import tqdm
 from pymovis.utils import util
 from pymovis.motion import Motion, FBX
 from pymovis.vis import AppManager
-from pymovis.ops import rotation, motionops
+from pymovis.ops import rotation
 
 from utility import testutil
 from utility.config import Config
 from utility.dataset import MotionDataset
-from vis.visapp import VisApp
+from vis.visapp import MultiMotionApp
 from model.twostage import ContextTransformer
 
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/context.json", "2023-03-11-20-30-10")
+    config = Config.load("configs/context.json")
     util.seed()
 
     # dataset
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
     print("Initializing model...")
@@ -50,8 +50,8 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            T = config.context_frames + 30
-            # T = config.context_frames + config.max_transition + 1
+            # T = config.context_frames + 30
+            T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
 
@@ -69,10 +69,14 @@ if __name__ == "__main__":
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
             # animation
-            for b in range(B):
-                GT_motion = Motion.from_torch(skeleton, GT_local_R[b], GT_root_p[b])
-                pred_motion = Motion.from_torch(skeleton, pred_local_R[b], pred_root_p[b])
+            GT_local_R = GT_local_R.reshape(B*T, -1, 3, 3)
+            GT_root_p = GT_root_p.reshape(B*T, -1)
+            pred_local_R = pred_local_R.reshape(B*T, -1, 3, 3)
+            pred_root_p = pred_root_p.reshape(B*T, -1)
 
-                app_manager = AppManager()
-                app = VisApp(GT_motion, pred_motion, GT_character.model(), pred_character.model())
-                app_manager.run(app)
+            GT_motion = Motion.from_torch(skeleton, GT_local_R, GT_root_p)
+            pred_motion = Motion.from_torch(skeleton, pred_local_R, pred_root_p)
+
+            app_manager = AppManager()
+            app = MultiMotionApp(GT_motion, pred_motion, GT_character.model(), pred_character.model(), T)
+            app_manager.run(app)
