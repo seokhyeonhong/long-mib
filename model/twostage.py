@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 
 from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet
+from pymovis.learning.embedding import RelativeSinusoidalPositionalEmbedding
 
 def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
     B, T, D = batch.shape
@@ -24,7 +25,6 @@ def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5)
             attn_mask[:, :, t] = False
             
     return batch_mask, attn_mask
-
 
 def get_keyframe_relative_position(window_length, context_frames):
     position = torch.arange(window_length, dtype=torch.float32)
@@ -69,13 +69,16 @@ class ContextTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
-            nn.Linear(1, self.d_model),
+            nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
         
+        # positional embedding
+        self.embedding = RelativeSinusoidalPositionalEmbedding(self.d_model, max_len=300) # arbitrary max_len
+
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.atten_layers = nn.ModuleList()
@@ -97,8 +100,8 @@ class ContextTransformer(nn.Module):
         
         # mask
         batch_mask, atten_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
-        x = x * batch_mask
-        x = self.encoder(torch.cat([x, batch_mask], dim=-1))
+        masked_x = x * batch_mask
+        x = self.encoder(torch.cat([masked_x, batch_mask], dim=-1))
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
@@ -106,7 +109,8 @@ class ContextTransformer(nn.Module):
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
         rel_dist = torch.arange(-T+1, T, dtype=torch.float32).to(x.device) # (2T-1)
-        lookup_table = self.relative_pos_encoder(rel_dist.unsqueeze(-1)) # (2T-1, d_model)
+        rel_dist = self.embedding.forward(rel_dist) # (2T-1, d_model)
+        lookup_table = self.relative_pos_encoder(rel_dist) # (2T-1, d_model)
 
         # Transformer encoder layers
         for i in range(self.n_layers):
@@ -155,12 +159,15 @@ class DetailTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
-            nn.Linear(1, self.d_model),
+            nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
+
+        # positional embedding
+        self.embedding = RelativeSinusoidalPositionalEmbedding(self.d_model, max_len=300) # arbitrary max_len
         
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
@@ -190,7 +197,8 @@ class DetailTransformer(nn.Module):
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
         rel_dist = torch.arange(-T+1, T, dtype=torch.float32).to(x.device) # (2T-1)
-        lookup_table = self.relative_pos_encoder(rel_dist.unsqueeze(-1)) # (2T-1, d_model)
+        rel_dist = self.embedding.forward(rel_dist) # (2T-1, d_model)
+        lookup_table = self.relative_pos_encoder(rel_dist) # (2T-1, d_model)
 
         # Transformer encoder layers
         for i in range(self.n_layers):

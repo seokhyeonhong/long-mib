@@ -10,12 +10,15 @@ class MotionDataset(Dataset):
         self.train  = train
         self.config = config
 
-        with open(os.path.join(self.config.dataset_dir, "skeleton.pkl"), "rb") as f:
-            self.skeleton = pickle.load(f)
-        
         self.features = torch.from_numpy(np.load(config.trainset_npy if train else config.testset_npy))
         self.shape = self.features.shape
 
+    @property
+    def skeleton(self):
+        with open(os.path.join(self.config.dataset_dir, "skeleton.pkl"), "rb") as f:
+            skeleton = pickle.load(f)
+        return skeleton
+        
     def __len__(self):
         return len(self.features)
     
