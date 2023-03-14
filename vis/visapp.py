@@ -1,13 +1,13 @@
 import copy
 import numpy as np
 import glfw
+import glm
 
-from pymovis.motion import FBX, Motion
 from pymovis.vis import MotionApp, Render, YBOT_FBX_DICT
 
-class MultiMotionApp(MotionApp):
-    def __init__(self, GT_motion, pred_motion, GT_model, pred_model, frames_per_motion):
-        super().__init__(GT_motion, GT_model, YBOT_FBX_DICT)
+class ContextMotionApp(MotionApp):
+    def __init__(self, GT_motion, pred_motion, ybot_model, frames_per_motion):
+        super().__init__(GT_motion, ybot_model, YBOT_FBX_DICT)
         self.frames_per_motion = frames_per_motion
 
         # visibility
@@ -19,11 +19,12 @@ class MultiMotionApp(MotionApp):
 
         # motion and model
         self.GT_motion     = GT_motion
-        self.GT_model      = GT_model
+        self.GT_model      = ybot_model
 
         self.pred_motion   = pred_motion
-        self.pred_model    = pred_model
+        self.pred_model    = copy.deepcopy(ybot_model)
         self.pred_model.set_source_skeleton(self.motion.skeleton, YBOT_FBX_DICT)
+        self.pred_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
 
         self.target_model  = copy.deepcopy(self.GT_model)
     
@@ -33,16 +34,16 @@ class MultiMotionApp(MotionApp):
         if self.show_GT:
             self.motion = self.GT_motion
             self.model = self.GT_model
-            super().render(not self.show_skeleton, self.show_skeleton)
+            super().render(render_xray=self.show_skeleton)
 
         if self.show_pred:
             self.motion = self.pred_motion
             self.model = self.pred_model
-            super().render(not self.show_skeleton, self.show_skeleton)
+            super().render(render_xray=self.show_skeleton)
 
         # draw target
         self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
-        Render.model(self.target_model).set_all_color_modes(True).set_all_alphas(0.5).draw()
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
     
     def render_text(self):
         super().render_text()
@@ -55,5 +56,72 @@ class MultiMotionApp(MotionApp):
             self.show_GT = not self.show_GT
         elif key == glfw.KEY_W and action == glfw.PRESS:
             self.show_pred = not self.show_pred
+        elif key == glfw.KEY_S and action == glfw.PRESS:
+            self.show_skeleton = not self.show_skeleton
+
+class DetailMotionApp(MotionApp):
+    def __init__(self, GT_motion, context_motion, detail_motion, ybot_model, frames_per_motion):
+        super().__init__(GT_motion, ybot_model, YBOT_FBX_DICT)
+        self.frames_per_motion = frames_per_motion
+
+        # visibility
+        self.axis.set_visible(False)
+        self.text.set_visible(False)
+        self.show_GT = True
+        self.show_context = True
+        self.show_detail = True
+        self.show_skeleton = False
+
+        # motion and model
+        self.GT_motion     = GT_motion
+        self.GT_model      = ybot_model
+
+        self.context_motion = context_motion
+        self.context_model = copy.deepcopy(ybot_model)
+        self.context_model.set_source_skeleton(self.motion.skeleton, YBOT_FBX_DICT)
+        self.context_model.meshes[0].materials[0].albedo = glm.vec3(1.0, 0.2, 0.2)
+
+        self.detail_motion = detail_motion
+        self.detail_model  = copy.deepcopy(ybot_model)
+        self.detail_model.set_source_skeleton(self.motion.skeleton, YBOT_FBX_DICT)
+        self.detail_model.meshes[0].materials[0].albedo = glm.vec3(0.2, 1.0, 0.2)
+
+        self.target_model  = copy.deepcopy(self.GT_model)
+    
+    def render(self):
+        ith_motion = self.frame // self.frames_per_motion
+
+        if self.show_GT:
+            self.motion = self.GT_motion
+            self.model = self.GT_model
+            super().render(render_xray=self.show_skeleton)
+
+        if self.show_context:
+            self.motion = self.context_motion
+            self.model = self.context_model
+            super().render(render_xray=self.show_skeleton)
+
+        if self.show_detail:
+            self.motion = self.detail_motion
+            self.model = self.detail_model
+            super().render(render_xray=self.show_skeleton)
+
+        # draw target
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+    
+    def render_text(self):
+        super().render_text()
+        Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).set_scale(0.5).draw()
+
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+
+        if key == glfw.KEY_Q and action == glfw.PRESS:
+            self.show_GT = not self.show_GT
+        elif key == glfw.KEY_W and action == glfw.PRESS:
+            self.show_context = not self.show_context
+        elif key == glfw.KEY_E and action == glfw.PRESS:
+            self.show_detail = not self.show_detail
         elif key == glfw.KEY_S and action == glfw.PRESS:
             self.show_skeleton = not self.show_skeleton

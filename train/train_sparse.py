@@ -16,7 +16,7 @@ from pymovis.ops import motionops
 
 from utility.dataset import MotionDataset
 from utility.config import Config
-from model.transformer import SparseTransformer
+from model.ours import SparseTransformer
 from utility import trainutil
 
 if __name__ == "__main__":

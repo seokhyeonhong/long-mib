@@ -16,7 +16,7 @@ from pymovis.ops import rotation
 from utility import testutil
 from utility.config import Config
 from utility.dataset import MotionDataset
-from vis.visapp import MultiMotionApp
+from vis.visapp import ContextMotionApp
 from model.twostage import ContextTransformer
 
 if __name__ == "__main__":
@@ -42,17 +42,16 @@ if __name__ == "__main__":
     model.eval()
 
     # character
-    GT_character = FBX("dataset/GT_ybot.fbx")
-    pred_character = FBX("dataset/pred_ybot.fbx")
+    ybot = FBX("dataset/GT_ybot.fbx")
 
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            # T = config.context_frames + 30
-            T = config.context_frames + config.max_transition + 1
-            GT_motion = GT_motion[:, :T, :]
+            # T = config.context_frames + 120
+            # T = config.context_frames + config.max_transition + 1
+            # GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
 
             # GT motion
@@ -78,5 +77,5 @@ if __name__ == "__main__":
             pred_motion = Motion.from_torch(skeleton, pred_local_R, pred_root_p)
 
             app_manager = AppManager()
-            app = MultiMotionApp(GT_motion, pred_motion, GT_character.model(), pred_character.model(), T)
+            app = ContextMotionApp(GT_motion, pred_motion, ybot.model(), T)
             app_manager.run(app)

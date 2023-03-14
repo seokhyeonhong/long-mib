@@ -42,7 +42,7 @@ class Config(dict):
         config.log_dir  = os.path.join(config.log_dir, postfix)
         config.save_dir = os.path.join(config.save_dir, postfix)
 
-        return cls(config)
+        return config
 
     def write(self, path):
         for key, value in self.items():

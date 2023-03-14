@@ -5,9 +5,35 @@ import torch.nn.functional as F
 
 from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet
 
-class SparseRelativeMultiHeadAttention(nn.Module):
+class GatingNetwork(nn.Module):
+    def __init__(self, d_in, d_model, d_phase=8, dropout=0.1):
+        super(GatingNetwork, self).__init__()
+        self.d_in = d_in
+        self.d_model = d_model
+        self.d_phase = d_phase
+
+        self.layers = nn.Sequential(
+            nn.Linear(d_in, d_model),
+            nn.PReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_model),
+            nn.PReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_model),
+            nn.PReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_model),
+            nn.PReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model, d_phase),
+        )
+
+    def forward(self, x):
+        return torch.softmax(self.layers(x), dim=-1)
+
+class RelativePhaseAttention(nn.Module):
     def __init__(self, d_model, d_head, n_head, dropout=0.1, pre_layernorm=True):
-        super(SparseRelativeMultiHeadAttention, self).__init__()
+        super(RelativePhaseAttention, self).__init__()
         self.d_model = d_model
         self.d_head = d_head
         self.n_head = n_head

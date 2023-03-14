@@ -2,6 +2,7 @@
 __pycache__/
 log/
 save/
+capture/
 
 # file types
 *.pkl
