@@ -5,6 +5,15 @@ import glm
 
 from pymovis.vis import MotionApp, Render, YBOT_FBX_DICT
 
+class SingleMotionApp(MotionApp):
+    def __init__(self, motion, ybot_model, frames_per_motion):
+        super().__init__(motion, ybot_model, YBOT_FBX_DICT)
+        self.frames_per_motion = frames_per_motion
+
+    def render_text(self):
+        super().render_text()
+        Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
+
 class ContextMotionApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, ybot_model, frames_per_motion):
         super().__init__(GT_motion, ybot_model, YBOT_FBX_DICT)
@@ -47,7 +56,7 @@ class ContextMotionApp(MotionApp):
     
     def render_text(self):
         super().render_text()
-        Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
+        # Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
 
     def key_callback(self, window, key, scancode, action, mods):
         super().key_callback(window, key, scancode, action, mods)

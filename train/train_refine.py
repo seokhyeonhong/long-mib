@@ -16,13 +16,13 @@ from pymovis.ops import motionops
 
 from utility.dataset import MotionDataset
 from utility.config import Config
-from model.ours import SparseTransformer
-from utility import trainutil
+from model.ours import SparseTransformer, RefineTransformer
+from utility import trainutil, testutil
 
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/sparse.json")
+    config = Config.load("configs/refine.json")
     util.seed()
 
     # dataset
@@ -37,10 +37,14 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = SparseTransformer(dataset.shape[-1], config).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
+    sparse_model = SparseTransformer(dataset.shape[-1], config).to(device)
+    testutil.load_model(sparse_model, Config.load("configs/sparse.json"))
+    sparse_model.eval()
+
+    refine_model = RefineTransformer(dataset.shape[-1], config).to(device)
+    optim = torch.optim.Adam(refine_model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
-    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
+    init_epoch, iter = trainutil.load_latest_ckpt(refine_model, optim, config, scheduler)
     init_iter = iter
 
     # save and log
@@ -71,9 +75,14 @@ if __name__ == "__main__":
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
-            # forward
-            batch = (GT_motion - motion_mean) / motion_std
-            pred_motion, _ = model.forward(batch, sparse_frames)
+            # SparseTransformer
+            with torch.no_grad():
+                batch = (GT_motion - motion_mean) / motion_std
+                pred_motion, mask = sparse_model.forward(batch, sparse_frames)
+                pred_motion = mask * GT_motion + (1-mask) * pred_motion
+
+            # RefineTransformer
+            pred_motion = refine_model.forward(pred_motion, sparse_frames, mask)
             pred_motion = pred_motion * motion_std + motion_mean
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
@@ -112,10 +121,10 @@ if __name__ == "__main__":
                 }
             
             if iter % config.save_interval == 0:
-                trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+                trainutil.save_ckpt(refine_model, optim, epoch, iter, config, scheduler)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
             
             iter += 1
     
     print(f"Training finished in {time.perf_counter() - start_time:.2f} seconds")
-    trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+    trainutil.save_ckpt(refine_model, optim, epoch, iter, config, scheduler)

@@ -53,7 +53,7 @@ if __name__ == "__main__":
     det_model.eval()
 
     # character
-    ybot = FBX("dataset/GT_ybot.fbx")
+    ybot = FBX("dataset/ybot.fbx")
 
     # training loop
     with torch.no_grad():
