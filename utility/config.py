@@ -3,8 +3,6 @@ import json
 from datetime import datetime
 import numpy as np
 
-from pymovis.vis.const import INCH_TO_METER
-
 class Config(dict):
     __getattr__ = dict.__getitem__
     __setattr__ = dict.__setitem__
