@@ -50,8 +50,8 @@ if __name__ == "__main__":
             B, T, D = GT_motion.shape
 
             # T = config.context_frames + 120
-            # T = config.context_frames + config.max_transition + 1
-            # GT_motion = GT_motion[:, :T, :]
+            T = config.context_frames + config.max_transition + 1
+            GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
 
             # GT motion

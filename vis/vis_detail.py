@@ -60,8 +60,7 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            # T = config.context_frames + config.max_transition + 1
-            T = 60
+            T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
 

@@ -5,7 +5,7 @@ import torch.nn as nn
 from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet
 from pymovis.learning.embedding import RelativeSinusoidalPositionalEmbedding
 
-def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
+def get_mask(batch, context_frames):
     B, T, D = batch.shape
 
     # 0 for unknown frames, 1 for known frames
@@ -86,11 +86,11 @@ class SparseTransformer(nn.Module):
             nn.Linear(self.d_model, self.d_motion),
         )
     
-    def forward(self, x, sparse_frames, ratio_constrained=0.1, prob_constrained=0.3):
+    def forward(self, x, sparse_frames):
         B, T, D = x.shape
         
         # mask
-        batch_mask, atten_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
+        batch_mask, atten_mask = get_mask(x, self.config.context_frames)
         masked_x = x * batch_mask
         x = self.encoder(torch.cat([masked_x, batch_mask], dim=-1))
 

@@ -134,3 +134,71 @@ class DetailMotionApp(MotionApp):
             self.show_detail = not self.show_detail
         elif key == glfw.KEY_S and action == glfw.PRESS:
             self.show_skeleton = not self.show_skeleton
+
+class SparseMotionApp(MotionApp):
+    def __init__(self, GT_motion, pred_motion, ybot_model, frames_per_motion, sparse_frames):
+        super().__init__(GT_motion, ybot_model, YBOT_FBX_DICT)
+        self.frames_per_motion = frames_per_motion
+        self.sparse_frames = sparse_frames
+
+        # visibility
+        self.axis.set_visible(False)
+        self.text.set_visible(False)
+        self.show_GT = True
+        self.show_pred = True
+        self.show_skeleton = False
+
+        # motion and model
+        self.GT_motion     = GT_motion
+        self.GT_model      = ybot_model
+
+        self.pred_motion   = pred_motion
+        self.pred_model    = copy.deepcopy(ybot_model)
+        self.pred_model.set_source_skeleton(self.motion.skeleton, YBOT_FBX_DICT)
+        self.pred_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
+
+        self.target_model  = copy.deepcopy(self.GT_model)
+        self.sparse_target_model = copy.deepcopy(self.GT_model)
+        self.sparse_target_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
+    
+    def render(self):
+        ith_motion = self.frame // self.frames_per_motion
+        ith_frame = self.frame % self.frames_per_motion
+
+        if self.show_GT:
+            self.motion = self.GT_motion
+            self.model = self.GT_model
+            super().render(render_xray=self.show_skeleton)
+
+        if self.show_pred:
+            self.motion = self.pred_motion
+            self.model = self.pred_model
+            super().render(render_xray=self.show_skeleton)
+
+        # draw target
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+
+        # draw sparse target
+        cand = self.sparse_frames > ith_frame
+        cand = self.sparse_frames[cand]
+        if cand.numel() == 0:
+            cand = self.sparse_frames.max()
+        else:
+            cand = cand.min()
+        self.sparse_target_model.set_pose_by_source(self.pred_motion.poses[(ith_motion)*self.frames_per_motion + cand])
+        Render.model(self.sparse_target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+    
+    def render_text(self):
+        super().render_text()
+        Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
+
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+
+        if key == glfw.KEY_Q and action == glfw.PRESS:
+            self.show_GT = not self.show_GT
+        elif key == glfw.KEY_W and action == glfw.PRESS:
+            self.show_pred = not self.show_pred
+        elif key == glfw.KEY_S and action == glfw.PRESS:
+            self.show_skeleton = not self.show_skeleton

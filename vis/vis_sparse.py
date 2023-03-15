@@ -64,7 +64,7 @@ if __name__ == "__main__":
 
             # CoarseNet
             batch = (GT_motion - motion_mean) / motion_std
-            pred_motion, mask = model.forward(batch, sparse_frames, ratio_constrained=0, prob_constrained=0)
+            pred_motion, mask = model.forward(batch, sparse_frames)
             pred_motion = pred_motion * motion_std + motion_mean
             pred_motion = mask * GT_motion + (1 - mask) * pred_motion
 
