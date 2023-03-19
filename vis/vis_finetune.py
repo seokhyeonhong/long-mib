@@ -18,7 +18,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import MotionDataset
 from vis.visapp import SparseMotionApp
-from model.twostage import ContextTransformer
+from model.twostage import ContextTransformer, DetailTransformer
 from model.ours import SparseTransformer
 
 if __name__ == "__main__":
@@ -45,14 +45,19 @@ if __name__ == "__main__":
     testutil.load_model(sparse_model, config)
     sparse_model.eval()
 
-    context_model = ContextTransformer(dataset.shape[-1], Config.load("configs/context.json")).to(device)
-    testutil.load_model(context_model, Config.load("configs/context.json"))
+    context_model = ContextTransformer(dataset.shape[-1], Config.load("configs/recurrent_context.json")).to(device)
+    testutil.load_model(context_model, Config.load("configs/recurrent_context.json"))
     context_model.eval()
+
+    # detail_model = DetailTransformer(dataset.shape[-1], Config.load("configs/detail.json")).to(device)
+    # testutil.load_model(detail_model, Config.load("configs/detail.json"))
+    # detail_model.eval()
 
     # character
     ybot = FBX("dataset/ybot.fbx")
 
     # training loop
+    config.max_transition *= 2
     sparse_frames = torch.arange(config.max_transition // config.fps) * config.fps
     sparse_frames += (config.context_frames-1) + config.fps
     sparse_frames = torch.cat([torch.arange(config.context_frames), sparse_frames])
@@ -60,9 +65,8 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            # T = config.context_frames + 120
-            # T = config.context_frames + config.max_transition + 1
-            # GT_motion = GT_motion[:, :T, :]
+            T = config.context_frames + config.max_transition
+            GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
 
             # GT motion
@@ -98,7 +102,7 @@ if __name__ == "__main__":
 
                 # context frame 마지막에 root position 맞출 delta
                 delta_p = root_p[:, config.context_frames-1:config.context_frames] * torchconst.XZ(device)
-                root_p = root_p - delta_p
+                root_p = torch.matmul(delta_R, (root_p - delta_p).unsqueeze(-1)).squeeze(-1)
 
                 # context frame 마지막에 forward, root position 맞춘 데이터로 다시 normalize
                 input_batch[:, :, :6] = root_R6
@@ -109,6 +113,9 @@ if __name__ == "__main__":
                 pred, mask = context_model.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
                 pred = mask * input_batch + (1 - mask) * pred
 
+                # pred, _ = detail_model.forward(pred, mask)
+                # pred = mask * input_batch + (1 - mask) * pred
+
                 # refine된 데이터로 다시 denormalize
                 pred = pred * motion_std + motion_mean
                 local_R6, root_p = torch.split(pred, [D-3, 3], dim=-1)
@@ -118,7 +125,7 @@ if __name__ == "__main__":
                 root_R = local_R[:, :, 0]
                 root_R = torch.matmul(delta_R.transpose(-1, -2), root_R)
                 root_R6 = rotation.R_to_R6(root_R)
-                root_p = root_p + delta_p
+                root_p = torch.matmul(delta_R.transpose(-1, -2), root_p.unsqueeze(-1)).squeeze(-1) + delta_p
                 pred[:, :, :6] = root_R6
                 pred[:, :, -3:] = root_p
 

@@ -22,14 +22,14 @@
     "epochs": 3000,
     "warmup_iters": 8000,
     "min_transition": 5,
-    "max_transition": 30,
+    "max_transition": 90,
 
     "dropout": 0.0,
     "n_layers": 6,
     "n_heads": 8,
     "d_model": 512,
     "d_ff": 2048,
-    "pre_layernorm": true,
+    "pre_layernorm": false,
 
     "weight_rot": 1.0,
     "weight_pos": 1.0,
