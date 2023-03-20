@@ -40,11 +40,11 @@ if __name__ == "__main__":
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
-    ctx_model = ContextTransformer(dataset.shape[-1], config).to(device)
+    ctx_model = ContextTransformer(dataset.shape[-1], Config.load("configs/context.json")).to(device)
     testutil.load_model(ctx_model, Config.load("configs/context.json"))
     ctx_model.eval()
 
@@ -89,9 +89,17 @@ if __name__ == "__main__":
             detail_local_R = rotation.R6_to_R(detail_local_R6.reshape(B, T, -1, 6))
 
             # animation
-            GT_motion = get_moiton(skeleton, GT_local_R, GT_root_p)
-            context_motion = get_moiton(skeleton, context_local_R, context_root_p)
-            detail_motion = get_moiton(skeleton, detail_local_R, detail_root_p)
+            GT_local_R = GT_local_R.reshape(B*T, -1, 3, 3)
+            GT_root_p = GT_root_p.reshape(B*T, 3)
+            GT_motion = Motion.from_torch(skeleton, GT_local_R, GT_root_p)
+
+            context_local_R = context_local_R.reshape(B*T, -1, 3, 3)
+            context_root_p = context_root_p.reshape(B*T, 3)
+            context_motion = Motion.from_torch(skeleton, context_local_R, context_root_p)
+
+            detail_local_R = detail_local_R.reshape(B*T, -1, 3, 3)
+            detail_root_p = detail_root_p.reshape(B*T, 3)
+            detail_motion = Motion.from_torch(skeleton, detail_local_R, detail_root_p)
 
             app_manager = AppManager()
             app = DetailMotionApp(GT_motion, context_motion, detail_motion, ybot.model(), T)

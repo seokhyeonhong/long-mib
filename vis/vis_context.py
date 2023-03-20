@@ -33,7 +33,7 @@ if __name__ == "__main__":
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
@@ -49,7 +49,7 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            # T = config.context_frames + 120
+            # T = config.context_frames + 121
             T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
@@ -61,8 +61,9 @@ if __name__ == "__main__":
             # CoarseNet
             batch = (GT_motion - motion_mean) / motion_std
             pred_motion, mask = model.forward(batch, ratio_constrained=0, prob_constrained=0)
+            pred_motion = mask * batch + (1 - mask) * pred_motion
             pred_motion = pred_motion * motion_std + motion_mean
-            pred_motion = mask * GT_motion + (1 - mask) * pred_motion
+            breakpoint()
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))

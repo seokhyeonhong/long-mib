@@ -62,7 +62,7 @@ class ContextTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(2, self.d_model),
+            nn.Linear(self.d_model * 2, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
@@ -105,6 +105,7 @@ class ContextTransformer(nn.Module):
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
+        keyframe_pos = self.embedding.forward(keyframe_pos).reshape(T, self.d_model*2)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
@@ -152,7 +153,7 @@ class DetailTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(2, self.d_model),
+            nn.Linear(self.d_model * 2, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
@@ -193,6 +194,7 @@ class DetailTransformer(nn.Module):
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
+        keyframe_pos = self.embedding.forward(keyframe_pos).reshape(T, self.d_model*2)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
