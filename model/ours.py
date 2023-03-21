@@ -177,7 +177,7 @@ class KeyframeTransformer(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
-            nn.Linear(self.d_model, self.d_motion),
+            nn.Linear(self.d_model, self.d_motion + 1),
         )
     
     def forward(self, x, sparse_frames):
@@ -211,5 +211,7 @@ class KeyframeTransformer(nn.Module):
             x = self.layer_norm(x)
         
         x = self.decoder(x)
+        motion, keyframe_prob = torch.split(x, [self.d_motion, 1], dim=-1) # (B, T, D), (B, T, 1)
+        keyframe_prob = torch.softmax(keyframe_prob, dim=1) # (B, T, 1)
 
-        return x, batch_mask
+        return motion, keyframe_prob, batch_mask

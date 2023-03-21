@@ -73,9 +73,9 @@ if __name__ == "__main__":
             transition_frames = random.randint(config.min_transition, config.max_transition)
             T = config.context_frames + transition_frames + 1
             GT_motion = GT_motion[:, :T, :]
+            GT_motion = GT_motion.to(device)
 
             # GT
-            GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
@@ -88,11 +88,11 @@ if __name__ == "__main__":
             # forward - ContextTransformer
             with torch.no_grad():
                 batch = (GT_motion - motion_mean) / motion_std
-                pred_motion, mask = ctx_model.forward(batch)
-                pred_motion = mask * batch + (1 - mask) * pred_motion # restore GT
+                ctx_motion, mask = ctx_model.forward(batch)
+                ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
 
             # forward - DetailTransformer
-            pred_motion, pred_contact = det_model.forward(pred_motion, mask)
+            pred_motion, pred_contact = det_model.forward(ctx_motion, mask)
             pred_motion = pred_motion * motion_std + motion_mean
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
@@ -104,10 +104,10 @@ if __name__ == "__main__":
             pred_feet_v = torch.cat([pred_feet_v[:, 0:1], pred_feet_v], dim=1)
             
             # loss
-            loss_rot     = config.weight_rot * F.l1_loss(pred_local_R6, GT_local_R6)
-            loss_pos     = config.weight_pos * F.l1_loss(pred_global_p, GT_global_p)
+            loss_rot     = config.weight_rot     * F.l1_loss(pred_local_R6, GT_local_R6)
+            loss_pos     = config.weight_pos     * F.l1_loss(pred_global_p, GT_global_p)
             loss_contact = config.weight_contact * F.l1_loss(pred_contact, GT_contact)
-            loss_foot    = config.weight_foot * F.l1_loss(pred_contact.detach() * pred_feet_v, torch.zeros_like(pred_feet_v))
+            loss_foot    = config.weight_foot    * F.l1_loss(pred_contact.detach() * pred_feet_v, torch.zeros_like(pred_feet_v))
             loss = loss_rot + loss_pos + loss_contact + loss_foot
 
             # backward
@@ -124,7 +124,7 @@ if __name__ == "__main__":
             loss_dict["foot"]    += loss_foot.item()
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Foot: {loss_dict['foot'] / config.log_interval:.4f}")
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Foot: {loss_dict['foot'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
                 writer.add_scalar("loss/total",   loss_dict["total"]   / config.log_interval, iter)
                 writer.add_scalar("loss/rot",     loss_dict["rot"]     / config.log_interval, iter)
                 writer.add_scalar("loss/pos",     loss_dict["pos"]     / config.log_interval, iter)

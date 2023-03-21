@@ -62,23 +62,20 @@ class ContextTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model * 2, self.d_model),
+            nn.Linear(2, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model),
+            nn.Linear(1, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
         
-        # positional embedding
-        self.embedding = RelativeSinusoidalPositionalEmbedding(self.d_model, max_len=300) # arbitrary max_len
-
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.atten_layers = nn.ModuleList()
@@ -105,12 +102,10 @@ class ContextTransformer(nn.Module):
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
-        keyframe_pos = self.embedding.forward(keyframe_pos).reshape(T, self.d_model*2)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
-        rel_dist = torch.arange(-T+1, T, dtype=torch.float32).to(x.device) # (2T-1)
-        rel_dist = self.embedding.forward(rel_dist) # (2T-1, d_model)
+        rel_dist = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
         lookup_table = self.relative_pos_encoder(rel_dist) # (2T-1, d_model)
 
         # Transformer encoder layers
@@ -153,23 +148,20 @@ class DetailTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model * 2, self.d_model),
+            nn.Linear(2, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model),
+            nn.Linear(1, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
 
-        # positional embedding
-        self.embedding = RelativeSinusoidalPositionalEmbedding(self.d_model, max_len=300) # arbitrary max_len
-        
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.atten_layers = nn.ModuleList()
@@ -194,12 +186,10 @@ class DetailTransformer(nn.Module):
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
-        keyframe_pos = self.embedding.forward(keyframe_pos).reshape(T, self.d_model*2)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
-        rel_dist = torch.arange(-T+1, T, dtype=torch.float32).to(x.device) # (2T-1)
-        rel_dist = self.embedding.forward(rel_dist) # (2T-1, d_model)
+        rel_dist = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
         lookup_table = self.relative_pos_encoder(rel_dist) # (2T-1, d_model)
 
         # Transformer encoder layers

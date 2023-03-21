@@ -54,7 +54,7 @@ if __name__ == "__main__":
         "total":  0,
         "rot":    0,
         "pos":    0,
-        "vel":    0,
+        "smooth": 0,
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
@@ -84,8 +84,8 @@ if __name__ == "__main__":
             # loss
             loss_rot = config.weight_rot * F.l1_loss(pred_local_R6, GT_local_R6)
             loss_pos = config.weight_pos * F.l1_loss(pred_global_p, GT_global_p)
-            loss_vel = config.weight_vel * F.l1_loss(pred_motion[:, 1:] - pred_motion[:, :-1], GT_motion[:, 1:] - GT_motion[:, :-1])
-            loss = loss_rot + loss_pos + loss_vel
+            loss_smooth = config.weight_vel * F.l1_loss(pred_motion[:, 1:] - pred_motion[:, :-1], torch.zeros_like(pred_motion[:, 1:]))
+            loss = loss_rot + loss_pos + loss_smooth
 
             # backward
             optim.zero_grad()
@@ -94,22 +94,22 @@ if __name__ == "__main__":
             scheduler.step()
 
             # log
-            loss_dict["total"] += loss.item()
-            loss_dict["rot"]   += loss_rot.item()
-            loss_dict["pos"]   += loss_pos.item()
-            loss_dict["vel"]   += loss_vel.item()
+            loss_dict["total"]  += loss.item()
+            loss_dict["rot"]    += loss_rot.item()
+            loss_dict["pos"]    += loss_pos.item()
+            loss_dict["smooth"] += loss_smooth.item()
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Vel: {loss_dict['vel'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
-                writer.add_scalar("loss/total", loss_dict["total"] / config.log_interval, iter)
-                writer.add_scalar("loss/rot",   loss_dict["rot"]   / config.log_interval, iter)
-                writer.add_scalar("loss/pos",   loss_dict["pos"]   / config.log_interval, iter)
-                writer.add_scalar("loss/vel",   loss_dict["vel"]   / config.log_interval, iter)
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Smooth: {loss_dict['smooth'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
+                writer.add_scalar("loss/total",  loss_dict["total"]  / config.log_interval, iter)
+                writer.add_scalar("loss/rot",    loss_dict["rot"]    / config.log_interval, iter)
+                writer.add_scalar("loss/pos",    loss_dict["pos"]    / config.log_interval, iter)
+                writer.add_scalar("loss/smooth", loss_dict["smooth"] / config.log_interval, iter)
                 loss_dict = {
                     "total":  0,
                     "rot":    0,
                     "pos":    0,
-                    "vel":    0,
+                    "smooth": 0,
                 }
             
             if iter % config.save_interval == 0:

@@ -9,14 +9,11 @@ import copy
 from tqdm import tqdm
 
 from pymovis.utils import util
-from pymovis.motion import Motion, FBX
-from pymovis.vis import AppManager
-from pymovis.ops import rotation
+from pymovis.ops import rotation, motionops
 
-from utility import testutil
+from utility import testutil, benchmark
 from utility.config import Config
 from utility.dataset import MotionDataset
-from vis.visapp import ContextMotionApp
 from model.twostage import ContextTransformer
 
 if __name__ == "__main__":
@@ -33,7 +30,7 @@ if __name__ == "__main__":
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
@@ -41,15 +38,12 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    # character
-    ybot = FBX("dataset/ybot.fbx")
-
     # training loop
+    l2p, l2q, npss = [], [], []
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
             B, T, D = GT_motion.shape
 
-            # T = config.context_frames + 121
             T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :]
             GT_motion = GT_motion.to(device)
@@ -57,8 +51,10 @@ if __name__ == "__main__":
             # GT motion
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
+            GT_global_R, GT_global_p = motionops.R_fk(GT_local_R, GT_root_p, skeleton)
+            GT_global_Q = rotation.R_to_Q(GT_global_R)
 
-            # CoarseNet
+            # ContextTransformer
             batch = (GT_motion - motion_mean) / motion_std
             pred_motion, mask = model.forward(batch, ratio_constrained=0, prob_constrained=0)
             pred_motion = mask * batch + (1 - mask) * pred_motion
@@ -66,16 +62,27 @@ if __name__ == "__main__":
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
+            pred_global_R, pred_global_p = motionops.R_fk(pred_local_R, pred_root_p, skeleton)
+            pred_global_Q = rotation.R_to_Q(pred_global_R)
 
-            # animation
-            GT_local_R = GT_local_R.reshape(B*T, -1, 3, 3)
-            GT_root_p = GT_root_p.reshape(B*T, -1)
-            pred_local_R = pred_local_R.reshape(B*T, -1, 3, 3)
-            pred_root_p = pred_root_p.reshape(B*T, -1)
+            # benchmark
+            L2P = benchmark.L2P(pred_global_p[:, config.context_frames:], GT_global_p[:, config.context_frames:])
+            L2Q = benchmark.L2Q(pred_global_Q[:, config.context_frames:], GT_global_Q[:, config.context_frames:])
 
-            GT_motion = Motion.from_torch(skeleton, GT_local_R, GT_root_p)
-            pred_motion = Motion.from_torch(skeleton, pred_local_R, pred_root_p)
+            NPSS_pred = pred_global_Q.reshape(B, T, -1)
+            NPSS_GT   = GT_global_Q.reshape(B, T, -1)
+            NPSS      = benchmark.NPSS(NPSS_pred[:, config.context_frames:], NPSS_GT[:, config.context_frames:])
+            
+            l2p.append(L2P)
+            l2q.append(L2Q)
+            npss.append(NPSS)
 
-            app_manager = AppManager()
-            app = ContextMotionApp(GT_motion, pred_motion, ybot.model(), T)
-            app_manager.run(app)
+    l2p  = torch.cat(l2p, dim=0)
+    l2q  = torch.cat(l2q, dim=0)
+    npss = torch.stack(npss, dim=0)
+
+    print("=====================================")
+    print("| L2P:  {:.6f}".format(l2p.mean()))
+    print("| L2Q:  {:.6f}".format(l2q.mean()))
+    print("| NPSS: {:.6f}".format(npss.mean()))
+    print("=====================================")
