@@ -20,19 +20,14 @@ class KeyframeApp(MotionApp):
         super().__init__(motion, model, dict)
         self.prob = prob
         self.copy_model = copy.deepcopy(model)
-        print(prob)
-
-        self.prob_sorted, self.prob_sorted_idx = torch.sort(self.prob, descending=True)
-        
-        print(self.prob_sorted)
-        print(self.prob_sorted_idx)
+        self.prob_sorted_idx = torch.argsort(prob.squeeze())[10:]
         self.prob_idx = 0
     
     def render(self):
         super().render()
 
-        for frame in range(self.prob_idx):
-            self.copy_model.set_pose_by_source(self.motion.poses[self.prob_sorted_idx[frame]])
+        for i in range(self.prob_idx):
+            self.copy_model.set_pose_by_source(self.motion.poses[self.prob_sorted_idx[i]])
             Render.model(self.copy_model).draw()
     
     def render_text(self):

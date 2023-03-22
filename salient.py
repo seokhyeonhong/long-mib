@@ -53,7 +53,7 @@ def main():
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
 
     # initial cost matrix
     results = []
@@ -68,7 +68,7 @@ def main():
 
         E_init = torch.zeros(B, T, T, device=device)
         E_init.fill_(float("inf"))
-        for frame_gap in range(1, T):
+        for frame_gap in tqdm(range(1, T)):
             frame_from = torch.arange(0, T-frame_gap)
             frame_to   = frame_from + frame_gap
 
@@ -82,23 +82,22 @@ def main():
             # interpolate motion between i-th keyframe and j-th keyframe
             feature_approx = get_interpolated_motion(feature_from, feature_to, frame_gap+1)
             feature_approx = feature_approx.reshape(B, N, frame_gap+1, D)
-            # local_R6_approx, root_p_approx = feature_approx[..., :-3], feature_approx[..., -3:]
-            # local_R_approx = rotation.R6_to_R(local_R6_approx.reshape(-1, 6)).reshape(B, N, frame_gap+1, -1, 3, 3)
-            # root_p_approx = root_p_approx.reshape(B, N, frame_gap+1, 3)
-            # _, global_p_approx = motionops.R_fk(local_R_approx, root_p_approx, skeleton)
+            local_R6_approx, root_p_approx = feature_approx[..., :-3], feature_approx[..., -3:]
+            local_R_approx = rotation.R6_to_R(local_R6_approx.reshape(-1, 6)).reshape(B, N, frame_gap+1, -1, 3, 3)
+            root_p_approx = root_p_approx.reshape(B, N, frame_gap+1, 3)
+            _, global_p_approx = motionops.R_fk(local_R_approx, root_p_approx, skeleton)
 
             # compute error between interpolated motion and original motion
             for i in range(0, T-frame_gap):
                 j = i + frame_gap
-                # error = torch.norm(global_p_approx[:, i] - global_p[:, i:j+1], dim=-1)
-                error = torch.abs(feature_approx[:, i] - feature[:, i:j+1])
+                error = torch.norm(global_p_approx[:, i] - global_p[:, i:j+1], dim=-1)
+                # error = torch.abs(feature_approx[:, i] - feature[:, i:j+1])
                 error = torch.mean(error, dim=-1)
                 E_init[:, i, j] = torch.max(error, dim=-1).values
 
         # dynamic programming for minimum cost path
-        for b in range(B):
+        for b in tqdm(range(B)):
             E = E_init[b].clone()
-            E_mask = torch.zeros_like(E)
             i = 0
             j = T - 1
             ks = [i, j]
@@ -107,8 +106,9 @@ def main():
                 error = float("inf")
                 min_k, max_k = ks[0], ks[1]
                 k_optimal = -1
-                for idx, min_k in enumerate(ks[:-1]):
-                    max_k = ks[idx+1]
+                sorted_ks = sorted(ks)
+                for idx, min_k in enumerate(sorted_ks[:-1]):
+                    max_k = sorted_ks[idx+1]
                     for k in range(min_k, max_k):
                         curr_cost = E[min_k, k] + E[k, max_k]
                         if curr_cost < error:
@@ -116,22 +116,20 @@ def main():
                             k_optimal = k
 
                 ks.append(k_optimal)
-                ks.sort()
-                print(f"frame {m} keyframe {k_optimal} cost {error}")
-
+                
             # keyframe probability
             keyframe_prob = torch.linspace(0, 1, T-1)
             keyframe_prob = keyframe_prob[1:]
             probs = []
 
-            for idx, k in enumerate(ks):
+            for idx, k in enumerate(ks[2:]):
                 probs.append(keyframe_prob[k-1].item())
             probs = [1] * config.context_frames + probs + [1]
             probs = torch.tensor(probs, dtype=torch.float32, device=device)
 
             new_feature = torch.cat([GT_feature[b], probs[:, None]], dim=-1)
             results.append(new_feature)
-
+        break
     results = torch.stack(results, dim=0).cpu().numpy()
     np.save(f"dataset/train/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy", results)
 

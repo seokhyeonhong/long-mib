@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import time
 from tqdm import tqdm
 
-from pymovis.utils import util
+from pymovis.utils import util, torchconst
 from pymovis.ops import motionops, rotation
 
 from utility.dataset import MotionDataset
@@ -71,13 +71,13 @@ if __name__ == "__main__":
             GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
+            
             GT_local_R = rotation.R6_to_R(GT_local_R6)
-
             GT_root_R = GT_local_R[:, :, 0]
-            GT_forward = torch.matmul(GT_root_R, v_forward)
+            GT_forward = F.normalize(torch.matmul(GT_root_R, v_forward)  * torchconst.XZ(device), dim=-1)
 
             _, GT_global_p = motionops.R_fk(GT_local_R, GT_root_p, skeleton)
-            GT_root_xz = GT_global_p[:, :, 0, (0, 2)]
+            GT_root_xz = GT_root_p[..., (0, 2)]
 
             # forward
             batch = (GT_motion - motion_mean) / motion_std
