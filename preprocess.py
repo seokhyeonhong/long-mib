@@ -72,7 +72,7 @@ def save_features(features, npy_path):
     np.save(npy_path, features)
 
 def main():
-    config = Config.load("configs/config.json")
+    config = Config.load("configs/context.json")
     train_motions, test_motions = load_motions(config)
 
     # feature extraction
