@@ -45,8 +45,8 @@ if __name__ == "__main__":
     testutil.load_model(sparse_model, config)
     sparse_model.eval()
 
-    context_model = ContextTransformer(dataset.shape[-1], Config.load("configs/recurrent_context.json")).to(device)
-    testutil.load_model(context_model, Config.load("configs/recurrent_context.json"))
+    context_model = ContextTransformer(dataset.shape[-1], Config.load("configs/context.json")).to(device)
+    testutil.load_model(context_model, Config.load("configs/context.json"))
     context_model.eval()
 
     # detail_model = DetailTransformer(dataset.shape[-1], Config.load("configs/detail.json")).to(device)
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     ybot = FBX("dataset/ybot.fbx")
 
     # training loop
-    config.max_transition *= 2
+    config.max_transition = 90
     sparse_frames = torch.arange(config.max_transition // config.fps) * config.fps
     sparse_frames += (config.context_frames-1) + config.fps
     sparse_frames = torch.cat([torch.arange(config.context_frames), sparse_frames])

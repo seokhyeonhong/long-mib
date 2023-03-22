@@ -5,19 +5,51 @@ sys.path.append("..")
 import torch
 from torch.utils.data import DataLoader
 
+import glfw
+import copy
 from pymovis.motion import Motion, FBX
-from pymovis.vis import AppManager, MotionApp, YBOT_FBX_DICT
+from pymovis.vis import AppManager, MotionApp, YBOT_FBX_DICT, Render
 from pymovis.ops import rotation
 
 from utility.config import Config
-from utility.dataset import MotionDataset
+from utility.dataset import MotionDataset, KeyframeDataset
 from vis.visapp import SingleMotionApp
+
+class KeyframeApp(MotionApp):
+    def __init__(self, motion, model, dict, prob):
+        super().__init__(motion, model, dict)
+        self.prob = prob
+        self.copy_model = copy.deepcopy(model)
+        print(prob)
+
+        self.prob_sorted, self.prob_sorted_idx = torch.sort(self.prob, descending=True)
+        
+        print(self.prob_sorted)
+        print(self.prob_sorted_idx)
+        self.prob_idx = 0
+    
+    def render(self):
+        super().render()
+
+        for frame in range(self.prob_idx):
+            self.copy_model.set_pose_by_source(self.motion.poses[self.prob_sorted_idx[frame]])
+            Render.model(self.copy_model).draw()
+    
+    def render_text(self):
+        super().render_text()
+        Render.text_on_screen(f"PROB_IDX: {self.prob_idx}").draw()
+    
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+
+        if key == glfw.KEY_D and action == glfw.PRESS:
+            self.prob_idx += 1
 
 if __name__ == "__main__":
     config = Config.load("configs/sparse.json")
     character = FBX("dataset/ybot.fbx")
-    dataset = MotionDataset(train=True, config=config)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataset = KeyframeDataset(train=False, config=config)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     skeleton = dataset.skeleton
 
@@ -26,16 +58,14 @@ if __name__ == "__main__":
     sparse_frames = torch.cat([torch.arange(config.context_frames), sparse_frames])
 
     for feature in dataloader:
-        feature = feature[:, sparse_frames]
         B, T, D = feature.shape
 
-        local_R6, root_p = torch.split(feature, [D-3, 3], dim=-1)
+        local_R6, root_p, kf_prob = torch.split(feature, [D-4, 3, 1], dim=-1)
         local_R = rotation.R6_to_R(local_R6.reshape(B, T, D//6, 6))
 
-        local_R = local_R.reshape(B*T, -1, 3, 3)
-        root_p = root_p.reshape(B*T, 3)
-        motion = Motion.from_torch(skeleton, local_R, root_p)
+        for b in range(B):
+            motion = Motion.from_torch(skeleton, local_R[b], root_p[b])
 
-        app_manager = AppManager()
-        app = MotionApp(motion, character.model(), YBOT_FBX_DICT)
-        app_manager.run(app)
+            app_manager = AppManager()
+            app = KeyframeApp(motion, character.model(), YBOT_FBX_DICT, kf_prob[b])
+            app_manager.run(app)
