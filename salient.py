@@ -87,7 +87,7 @@ def main():
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
     # initial cost matrix
     results = []
@@ -152,18 +152,20 @@ def main():
             salient_pose = get_salient_poses(b, T=T, E_init=E_init)
             results.append(salient_pose)
         
-        if len(GTs) == 10:
+        if len(GTs) == 1:
             break
     
     # compute probability of keyframe
     probs = []
     for r in results:
+        # num_keyframes = T
+        num_keyframes = T
         prob = np.zeros(T)
-        for k in range(3, T):
-            kfs = r[(k, T-1)]
+        for k in range(3, num_keyframes):
+            kfs = r[(k, num_keyframes-1)]
             for kf in kfs:
-                prob[kf] += (T-2) / (k-2)
-        prob = prob / np.sum(prob)
+                prob[kf] += 1
+        prob = prob / (num_keyframes-3)
         prob = np.concatenate([np.ones(config.context_frames-1), prob])
         probs.append(prob)
     probs = np.stack(probs, axis=0)[..., None]

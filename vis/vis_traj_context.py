@@ -71,7 +71,7 @@ if __name__ == "__main__":
             # CoarseNet
             batch = (GT_motion - motion_mean) / motion_std
             batch = torch.cat([batch, GT_forward, GT_root_xz], dim=-1)
-            pred_motion, _ = model.forward(batch)
+            pred_motion, _ = model.forward(batch, ratio_constrained=0, prob_constrained=0)
             # pred_motion = mask * batch + (1 - mask) * pred_motion
             pred_motion = pred_motion * motion_std + motion_mean
 

@@ -33,7 +33,7 @@ if __name__ == "__main__":
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
@@ -41,6 +41,9 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
+    # for name, param in model.named_parameters():
+    #     print(name, param.data)
+    #     breakpoint()
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
@@ -52,7 +55,6 @@ if __name__ == "__main__":
             GT_motion = GT_motion.to(device)
 
             # GT motion
-            GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             
