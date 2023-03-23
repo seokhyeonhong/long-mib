@@ -10,8 +10,6 @@ import copy
 from tqdm import tqdm
 
 from pymovis.utils import util, torchconst
-from pymovis.motion import Motion, FBX
-from pymovis.vis import AppManager
 from pymovis.ops import rotation, motionops
 
 from utility import testutil
