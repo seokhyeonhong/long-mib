@@ -12,7 +12,7 @@ from pymovis.vis import AppManager, MotionApp, YBOT_FBX_DICT, Render
 from pymovis.ops import rotation
 
 from utility.config import Config
-from utility.dataset import MotionDataset, KeyframeDataset
+from utility.dataset import KeyframeDataset
 from vis.visapp import SingleMotionApp
 
 class KeyframeApp(MotionApp):
@@ -53,7 +53,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     config = Config.load("configs/sparse.json")
     character = FBX("dataset/ybot.fbx")
-    dataset = KeyframeDataset(train=False, config=config)
+    dataset = KeyframeDataset(train=True, config=config)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     skeleton = dataset.skeleton

@@ -16,7 +16,7 @@ from pymovis.ops import rotation, motionops
 
 from utility import testutil
 from utility.config import Config
-from utility.dataset import MotionDataset
+from utility.dataset import KeyframeDataset
 from vis.visapp import ContextMotionApp
 from model.twostage import TrajContextTransformer
 
@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=False, config=config)
+    dataset    = KeyframeDataset(train=True, config=config)
     skeleton   = dataset.skeleton
     v_forward  = torch.from_numpy(config.v_forward).to(device)
 

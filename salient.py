@@ -81,14 +81,14 @@ def main():
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=False, config=config)
+    dataset    = MotionDataset(train=True, config=config)
     skeleton   = dataset.skeleton
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-    # dataloader = DataLoader(dataset, batch_size=config.context_frames, shuffle=True)
+    # dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.context_frames, shuffle=True)
 
     # initial cost matrix
     results = []
@@ -152,7 +152,7 @@ def main():
         for b in tqdm(range(B), leave=False):
             salient_pose = get_salient_poses(b, T=T, E_init=E_init)
             results.append(salient_pose)
-        
+
     # compute probability of keyframe
     probs = []
     for r in results:
@@ -171,7 +171,7 @@ def main():
     GTs = torch.cat(GTs, dim=0).cpu().numpy()
     results = np.concatenate([GTs, probs], axis=-1)
     
-    np.save(f"dataset/train/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy", results)
+    np.save(config.keyframe_trainset_npy, results)
 
 if __name__ == "__main__":
     main()

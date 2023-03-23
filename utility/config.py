@@ -34,6 +34,8 @@ class Config(dict):
         config.testset_dir  = os.path.join(config.dataset_dir, "test")
         config.trainset_npy = f"{config.trainset_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
         config.testset_npy  = f"{config.testset_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.keyframe_trainset_npy = f"{config.trainset_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.keyframe_testset_npy  = f"{config.testset_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
 
         # directories to save and log training
         postfix = f"transition{config.min_transition}-{config.max_transition}"
