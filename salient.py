@@ -40,6 +40,38 @@ def get_interpolated_motion(feature_from, feature_to, num_frames):
     feature_approx = torch.cat([R6_approx, p_approx], dim=-1)
     return feature_approx
 
+def insert_keyframes(S, cost, key, kfs, error):
+    S[key] = kfs
+    cost[key] = error
+
+def compute_salient_poses(b, T, E_init):
+    S = {}
+    cost = {}
+    for e in range(2, T+1):
+        if e == 2:
+            insert_keyframes(S, cost, (2, e-1), np.array([0, e-1]), E_init[b, 0, e-1])
+
+        else:
+            insert_keyframes(S, cost, (2, e-1), np.array([0, e-1]), E_init[b, 0, e-1])
+            insert_keyframes(S, cost, (e-1, e-1), np.arange(e-1), 0)
+
+            for k in range(3, e):
+                # compute argmin (S(k-1, j) + {e})
+                min_cost = float("inf")
+                jstar = -1
+
+                for j in range(k-1, e-1):
+                    error = max(cost[(k-1, j)], E_init[b, S[(k-1, j)][-1], e-1])
+
+                    if error < min_cost:
+                        min_cost = error
+                        jstar = j
+
+                kfselection = np.append(S[(k-1, jstar)], np.array([e-1]))
+                insert_keyframes(S, cost, (k, e-1), kfselection, min_cost)
+    
+    return S
+
 def main():
     # device = torch.device("cpu")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,19 +79,23 @@ def main():
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=False, config=config)
+    dataset    = MotionDataset(train=True, config=config)
     skeleton   = dataset.skeleton
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
+    # dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # initial cost matrix
     results = []
+    GTs = []
     for GT_feature in tqdm(dataloader):
         GT_feature = GT_feature.to(device)
-
+        GTs.append(GT_feature)
+        
+        # split motion features to start from context frame
         feature = GT_feature[:, config.context_frames-1:]
         B, T, D = feature.shape
         local_R6, root_p = feature[..., :-3], feature[..., -3:]
@@ -68,7 +104,13 @@ def main():
 
         E_init = torch.zeros(B, T, T, device=device)
         E_init.fill_(float("inf"))
-        for frame_gap in tqdm(range(1, T)):
+        for frame_gap in tqdm(range(1, T), leave=False):
+            if frame_gap == 1:
+                for i in range(T-1):
+                    j = i + 1
+                    E_init[:, i, j] = 0
+                continue
+
             frame_from = torch.arange(0, T-frame_gap)
             frame_to   = frame_from + frame_gap
 
@@ -79,7 +121,7 @@ def main():
             feature_from = feature_from.reshape(B*N, 1, D)
             feature_to   = feature_to.reshape(B*N, 1, D)
 
-            # interpolate motion between i-th keyframe and j-th keyframe
+            # piecewise interpolation motion between i-th keyframe and j-th keyframe
             feature_approx = get_interpolated_motion(feature_from, feature_to, frame_gap+1)
             feature_approx = feature_approx.reshape(B, N, frame_gap+1, D)
             local_R6_approx, root_p_approx = feature_approx[..., :-3], feature_approx[..., -3:]
@@ -87,50 +129,44 @@ def main():
             root_p_approx = root_p_approx.reshape(B, N, frame_gap+1, 3)
             _, global_p_approx = motionops.R_fk(local_R_approx, root_p_approx, skeleton)
 
-            # compute error between interpolated motion and original motion
+            # GT motion features to compare
+            global_ps = []
             for i in range(0, T-frame_gap):
                 j = i + frame_gap
-                error = torch.norm(global_p_approx[:, i] - global_p[:, i:j+1], dim=-1)
-                # error = torch.abs(feature_approx[:, i] - feature[:, i:j+1])
-                error = torch.mean(error, dim=-1)
-                E_init[:, i, j] = torch.max(error, dim=-1).values
+                global_ps.append(global_p[:, i:j+1])
+            global_ps = torch.stack(global_ps, dim=1)
+
+            # error between interpolated motion and GT motion
+            error = torch.norm(global_p_approx - global_ps, dim=-1)
+            error = torch.sum(error, dim=-1)
+            error = torch.max(error, dim=-1)[0]
+
+            # store error
+            for i in range(0, T-frame_gap):
+                j = i + frame_gap
+                E_init[:, i, j] = error[:, i]
 
         # dynamic programming for minimum cost path
-        for b in tqdm(range(B)):
-            E = E_init[b].clone()
-            i = 0
-            j = T - 1
-            ks = [i, j]
-
-            for m in range(1, T-1):
-                error = float("inf")
-                min_k, max_k = ks[0], ks[1]
-                k_optimal = -1
-                sorted_ks = sorted(ks)
-                for idx, min_k in enumerate(sorted_ks[:-1]):
-                    max_k = sorted_ks[idx+1]
-                    for k in range(min_k, max_k):
-                        curr_cost = E[min_k, k] + E[k, max_k]
-                        if curr_cost < error:
-                            error = curr_cost
-                            k_optimal = k
-
-                ks.append(k_optimal)
-                
-            # keyframe probability
-            keyframe_prob = torch.linspace(0, 1, T-1)
-            keyframe_prob = keyframe_prob[1:]
-            probs = []
-
-            for idx, k in enumerate(ks[2:]):
-                probs.append(keyframe_prob[k-1].item())
-            probs = [1] * config.context_frames + probs + [1]
-            probs = torch.tensor(probs, dtype=torch.float32, device=device)
-
-            new_feature = torch.cat([GT_feature[b], probs[:, None]], dim=-1)
-            results.append(new_feature)
+        bs = range(B)
+        S = util.run_parallel_sync(compute_salient_poses, bs, T=T, E_init=E_init)
+        results.extend(S)
         break
-    results = torch.stack(results, dim=0).cpu().numpy()
+
+    probs = []
+    for r in results:
+        prob = np.zeros(T)
+        for k in range(3, T):
+            kfs = r[(k, T-1)]
+            for kf in kfs:
+                prob[kf] += 1
+        prob = prob / np.sum(prob)
+        prob = np.concatenate([np.ones(config.context_frames-1), prob])
+        probs.append(prob)
+    probs = np.stack(probs, axis=0)[..., None]
+
+    GTs = torch.cat(GTs, dim=0).cpu().numpy()
+    results = np.concatenate([GTs, probs], axis=-1)
+    
     np.save(f"dataset/train/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy", results)
 
 if __name__ == "__main__":
