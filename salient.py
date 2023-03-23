@@ -42,11 +42,11 @@ def get_interpolated_motion(feature_from, feature_to, num_frames):
 
 def insert_keyframes(S, cost, key, kfs, error):
     S[key] = kfs
-    cost[key] = error
+    cost[key[0], key[1]] = error
 
-def compute_salient_poses(b, T, E_init):
+def get_salient_poses(b, T, E_init):
     S = {}
-    cost = {}
+    cost = np.zeros((T, T))
     for e in range(2, T+1):
         if e == 2:
             insert_keyframes(S, cost, (2, e-1), np.array([0, e-1]), E_init[b, 0, e-1])
@@ -60,16 +60,18 @@ def compute_salient_poses(b, T, E_init):
                 min_cost = float("inf")
                 jstar = -1
 
-                for j in range(k-1, e-1):
-                    error = max(cost[(k-1, j)], E_init[b, S[(k-1, j)][-1], e-1])
+                js = np.arange(k-1, e-1)
+                temp = []
+                for j in js:
+                    temp.append(S[(k-1, j)][-1])
+                temp = np.array(temp)
 
-                    if error < min_cost:
-                        min_cost = error
-                        jstar = j
+                error = np.maximum(cost[(k-1, js)], E_init[b, temp, e-1].cpu().numpy())
+                min_cost = np.min(error)
+                jstar = js[np.argmin(error)]
 
                 kfselection = np.append(S[(k-1, jstar)], np.array([e-1]))
                 insert_keyframes(S, cost, (k, e-1), kfselection, min_cost)
-    
     return S
 
 def main():
@@ -79,14 +81,13 @@ def main():
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=True, config=config)
+    dataset    = MotionDataset(train=False, config=config)
     skeleton   = dataset.skeleton
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=False)
-    # dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
 
     # initial cost matrix
     results = []
@@ -147,18 +148,21 @@ def main():
                 E_init[:, i, j] = error[:, i]
 
         # dynamic programming for minimum cost path
-        bs = range(B)
-        S = util.run_parallel_sync(compute_salient_poses, bs, T=T, E_init=E_init)
-        results.extend(S)
-        break
-
+        for b in tqdm(range(B), leave=False):
+            salient_pose = get_salient_poses(b, T=T, E_init=E_init)
+            results.append(salient_pose)
+        
+        if len(GTs) == 10:
+            break
+    
+    # compute probability of keyframe
     probs = []
     for r in results:
         prob = np.zeros(T)
         for k in range(3, T):
             kfs = r[(k, T-1)]
             for kf in kfs:
-                prob[kf] += 1
+                prob[kf] += (T-2) / (k-2)
         prob = prob / np.sum(prob)
         prob = np.concatenate([np.ones(config.context_frames-1), prob])
         probs.append(prob)

@@ -22,6 +22,7 @@ class KeyframeApp(MotionApp):
         self.copy_model = copy.deepcopy(model)
         self.prob_sorted_idx = torch.argsort(prob.squeeze(), descending=True)[11:]
         self.prob_idx = 0
+        self.sphere = Render.sphere(0.05, 4, 4).set_albedo([1, 0, 0])
 
         for p, idx in zip(prob.squeeze(), range(len(prob.squeeze()))):
             print(f"{idx}: {p}")
@@ -31,7 +32,11 @@ class KeyframeApp(MotionApp):
 
         for i in range(self.prob_idx):
             self.copy_model.set_pose_by_source(self.motion.poses[self.prob_sorted_idx[i]])
-            Render.model(self.copy_model).draw()
+            Render.model(self.copy_model).set_all_alphas(0.5).draw()
+        
+        for frame in range(self.total_frames):
+            position = self.motion.poses[frame].root_p
+            self.sphere.set_position(position[0], 0, position[2]).draw()
     
     def render_text(self):
         super().render_text()
@@ -42,12 +47,14 @@ class KeyframeApp(MotionApp):
 
         if key == glfw.KEY_D and action == glfw.PRESS:
             self.prob_idx += 1
+        elif key == glfw.KEY_S and action == glfw.PRESS:
+            self.prob_idx -= 1
 
 if __name__ == "__main__":
     config = Config.load("configs/sparse.json")
     character = FBX("dataset/ybot.fbx")
     dataset = KeyframeDataset(train=False, config=config)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     skeleton = dataset.skeleton
 

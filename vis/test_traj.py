@@ -43,9 +43,6 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    # character
-    ybot = FBX("dataset/ybot.fbx")
-
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
@@ -77,16 +74,9 @@ if __name__ == "__main__":
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
+            
+            _, pred_global_p = motionops.R_fk(pred_local_R, pred_root_p, skeleton)
 
-            # animation
-            GT_local_R = GT_local_R.reshape(B*T, -1, 3, 3)
-            GT_root_p = GT_root_p.reshape(B*T, -1)
-            pred_local_R = pred_local_R.reshape(B*T, -1, 3, 3)
-            pred_root_p = pred_root_p.reshape(B*T, -1)
-
-            GT_motion = Motion.from_torch(skeleton, GT_local_R, GT_root_p)
-            pred_motion = Motion.from_torch(skeleton, pred_local_R, pred_root_p)
-
-            app_manager = AppManager()
-            app = ContextMotionApp(GT_motion, pred_motion, ybot.model(), T)
-            app_manager.run(app)
+            # error
+            error = torch.norm(pred_global_p - GT_global_p, dim=-1).sum()
+            print(error)

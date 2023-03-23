@@ -92,7 +92,7 @@ if __name__ == "__main__":
             # loss
             loss_rot = config.weight_rot * F.l1_loss(pred_local_R6, GT_local_R6)
             loss_pos = config.weight_pos * F.l1_loss(pred_global_p, GT_global_p)
-            loss_smooth = config.weight_vel * F.l1_loss(pred_motion[:, 1:] - pred_motion[:, :-1], torch.zeros_like(pred_motion[:, 1:]))
+            loss_smooth = config.weight_vel * F.l1_loss(pred_global_p[:, 1:] - pred_global_p[:, :-1], torch.zeros_like(pred_global_p[:, 1:]))
             loss = loss_rot + loss_pos + loss_smooth
 
             # backward
