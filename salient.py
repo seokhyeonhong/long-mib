@@ -88,6 +88,7 @@ def main():
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+    # dataloader = DataLoader(dataset, batch_size=config.context_frames, shuffle=True)
 
     # initial cost matrix
     results = []
@@ -138,7 +139,7 @@ def main():
             global_ps = torch.stack(global_ps, dim=1)
 
             # error between interpolated motion and GT motion
-            error = torch.norm(global_p_approx - global_ps, dim=-1)
+            error = torch.sum((global_p_approx - global_ps)**2, dim=-1)
             error = torch.sum(error, dim=-1)
             error = torch.max(error, dim=-1)[0]
 
@@ -152,20 +153,17 @@ def main():
             salient_pose = get_salient_poses(b, T=T, E_init=E_init)
             results.append(salient_pose)
         
-        if len(GTs) == 1:
-            break
-    
     # compute probability of keyframe
     probs = []
     for r in results:
         # num_keyframes = T
-        num_keyframes = T
+        num_keyframes = 32
         prob = np.zeros(T)
-        for k in range(3, num_keyframes):
-            kfs = r[(k, num_keyframes-1)]
+        for k in range(3, num_keyframes+1):
+            kfs = r[(k, T-1)]
             for kf in kfs:
                 prob[kf] += 1
-        prob = prob / (num_keyframes-3)
+        prob = prob / (num_keyframes-2)
         prob = np.concatenate([np.ones(config.context_frames-1), prob])
         probs.append(prob)
     probs = np.stack(probs, axis=0)[..., None]
