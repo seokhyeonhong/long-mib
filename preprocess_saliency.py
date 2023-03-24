@@ -66,7 +66,7 @@ def get_salient_poses(b, T, E_init):
                     temp.append(S[(k-1, j)][-1])
                 temp = np.array(temp)
 
-                error = np.maximum(cost[(k-1, js)], E_init[b, temp, e-1].cpu().numpy())
+                error = np.maximum(cost[(k-1, js)], E_init[b, temp, e-1])
                 min_cost = np.min(error)
                 jstar = js[np.argmin(error)]
 
@@ -81,7 +81,7 @@ def main():
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=False, config=config)
+    dataset    = MotionDataset(train=True, config=config)
     skeleton   = dataset.skeleton
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
@@ -149,9 +149,8 @@ def main():
                 E_init[:, i, j] = error[:, i]
 
         # dynamic programming for minimum cost path
-        for b in tqdm(range(B), leave=False):
-            salient_pose = get_salient_poses(b, T=T, E_init=E_init)
-            results.append(salient_pose)
+        salient_pose = util.run_parallel_sync(get_salient_poses, range(B), T=T, E_init=E_init.cpu().numpy())
+        results.extend(salient_pose)
 
     # compute probability of keyframe
     probs = []
