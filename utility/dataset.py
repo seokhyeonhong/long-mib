@@ -6,6 +6,12 @@ import torch
 from torch.utils.data import Dataset
 
 class MotionDataset(Dataset):
+    """
+    Motion dataset for training and testing
+    Features:
+        - motion features (number of joints * 6 + 3) for each frame, 6D orientations and a 3D translation vector
+        - trajectory features (5) for each frame, a 3D forward vector and a 2D xz position vector
+    """
     def __init__(self, train, config):
         self.train  = train
         self.config = config
@@ -24,8 +30,8 @@ class MotionDataset(Dataset):
 
     def statistics(self, dim=(0, 1)):
         # load and return mean and std if they exist
-        mean_path = os.path.join(self.config.dataset_dir, f"mean_{dim}.pt")
-        std_path  = os.path.join(self.config.dataset_dir, f"std_{dim}.pt")
+        mean_path = os.path.join(self.config.dataset_dir, f"motion_mean_{dim}.pt")
+        std_path  = os.path.join(self.config.dataset_dir, f"motion_std_{dim}.pt")
 
         if os.path.exists(mean_path) and os.path.exists(std_path):
             mean = torch.load(mean_path)

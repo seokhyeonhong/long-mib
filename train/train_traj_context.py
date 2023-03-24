@@ -16,7 +16,7 @@ from pymovis.ops import motionops, rotation
 
 from utility.dataset import MotionDataset
 from utility.config import Config
-from model.twostage import TrajContextTransformer
+from model.ours import TrajectoryTransformer
 from utility import trainutil
 
 if __name__ == "__main__":
@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = TrajContextTransformer(dataset.shape[-1], config).to(device)
+    model = TrajectoryTransformer(dataset.shape[-1], config).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
@@ -69,23 +69,16 @@ if __name__ == "__main__":
 
             # GT
             GT_motion = GT_motion.to(device)
-            GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
+            GT_local_R6, GT_root_p, GT_traj = torch.split(GT_motion, [D-8, 3, 5], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
-            
-            GT_local_R = rotation.R6_to_R(GT_local_R6)
-            GT_root_R = GT_local_R[:, :, 0]
-            GT_forward = F.normalize(torch.matmul(GT_root_R, v_forward)  * torchconst.XZ(device), dim=-1)
-
-            _, GT_global_p = motionops.R_fk(GT_local_R, GT_root_p, skeleton)
-            GT_root_xz = GT_root_p[..., (0, 2)]
+            _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
             # forward
             batch = (GT_motion - motion_mean) / motion_std
-            batch = torch.cat([batch, GT_forward, GT_root_xz], dim=-1)
             pred_motion, _ = model.forward(batch)
-            pred_motion = pred_motion * motion_std + motion_mean
+            pred_motion = pred_motion * motion_std[..., :-5] + motion_mean[..., :-5] # exclude traj features
 
-            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
+            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-8, 3], dim=-1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
             

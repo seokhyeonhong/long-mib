@@ -84,7 +84,7 @@ def get_keyframes(config, train=True):
     skeleton   = dataset.skeleton
 
     # dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
 
     # initial cost matrix
     save_dir = f"{config.train_dir if train else config.test_dir}/salient"
@@ -187,11 +187,12 @@ def generate_dataset(config, train=True):
         save_features.append(feature)
 
     save_features = np.stack(save_features, axis=0)
+    print(f"save_features.shape: {save_features.shape}")
     np.save(f"{config.keyframe_trainset_npy if train else config.keyframe_testset_npy}", save_features)
 
 def main():
     config = Config.load("configs/context.json")
-    
+
     get_keyframes(config, train=True)
     generate_dataset(config, train=True)
 
