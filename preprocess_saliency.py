@@ -81,14 +81,14 @@ def main():
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=True, config=config)
+    dataset    = MotionDataset(train=False, config=config)
     skeleton   = dataset.skeleton
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     
     # dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
-    dataloader = DataLoader(dataset, batch_size=config.context_frames, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # initial cost matrix
     results = []
@@ -171,7 +171,7 @@ def main():
     GTs = torch.cat(GTs, dim=0).cpu().numpy()
     results = np.concatenate([GTs, probs], axis=-1)
     
-    np.save(config.keyframe_trainset_npy, results)
+    np.save(config.keyframe_testset_npy, results)
 
 if __name__ == "__main__":
     main()

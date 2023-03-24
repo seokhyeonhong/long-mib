@@ -53,7 +53,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     config = Config.load("configs/sparse.json")
     character = FBX("dataset/ybot.fbx")
-    dataset = KeyframeDataset(train=True, config=config)
+    dataset = KeyframeDataset(train=False, config=config)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     skeleton = dataset.skeleton

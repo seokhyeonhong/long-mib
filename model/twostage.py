@@ -268,7 +268,7 @@ class TrajContextTransformer(nn.Module):
         B, T, D = x.shape
         
         # mask
-        batch_mask, atten_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
+        batch_mask, _ = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
         batch_mask[..., -5:] = 1 # no mask for trajectory
         masked_x = x * batch_mask
         x = self.encoder(torch.cat([masked_x, batch_mask], dim=-1))
@@ -283,7 +283,7 @@ class TrajContextTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=atten_mask) # self-attention
+            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=None) # self-attention
             x = self.pffn_layers[i](x)
         
         # decoder
