@@ -1,6 +1,7 @@
 import os
 import pickle
 import numpy as np
+import zipfile
 
 from pymovis.motion import BVH
 from pymovis.ops import rotation
@@ -10,16 +11,29 @@ from utility.config import Config
 
 """ Load BVH files and convert to Motion objects """
 def load_motions(config):
+    train_zip = os.path.join(config.train_dir, "train.zip")
+    test_zip  = os.path.join(config.test_dir, "test.zip")
     train_files, test_files = [], []
+    
+    # extract zip files
+    with zipfile.ZipFile(train_zip, "r") as z:
+        dirname = os.path.join(config.train_dir, "bvh")
+        if not os.path.exists(dirname):
+            os.mkdir(dirname)
+        
+        for name in z.namelist():
+            z.extract(name, dirname)
+            train_files.append(os.path.join(dirname, name))
+    
+    with zipfile.ZipFile(test_zip, "r") as z:
+        dirname = os.path.join(config.test_dir, "bvh")
+        if not os.path.exists(dirname):
+            os.mkdir(dirname)
+        
+        for name in z.namelist():
+            z.extract(name, dirname)
+            test_files.append(os.path.join(dirname, name))
 
-    for file in sorted(os.listdir(config.trainset_dir)):
-        if file.endswith(".bvh"):
-            train_files.append(os.path.join(config.trainset_dir, file))
-    
-    for file in sorted(os.listdir(config.testset_dir)):
-        if file.endswith(".bvh"):
-            test_files.append(os.path.join(config.testset_dir, file))
-    
     train_motions = BVH.load_parallel(train_files, v_forward=config.v_forward, v_up=config.v_up, to_meter=0.01)
     test_motions  = BVH.load_parallel(test_files, v_forward=config.v_forward, v_up=config.v_up, to_meter=0.01)
 
@@ -55,10 +69,12 @@ def get_features_parallel(windows):
 def get_features(window):
     local_R = np.stack([pose.local_R for pose in window.poses], axis=0)
     root_p  = np.stack([pose.root_p for pose in window.poses], axis=0)
+    xz      = root_p[..., (0, 2)]
+    forward = np.stack([pose.forward for pose in window.poses], axis=0)
 
     local_R6 = rotation.R_to_R6(local_R).reshape(len(window), -1)
     root_p   = root_p.reshape(len(window), -1)
-    feature = np.concatenate([local_R6, root_p], axis=-1).astype(np.float32)
+    feature = np.concatenate([local_R6, root_p, xz, forward], axis=-1).astype(np.float32)
 
     return feature
 

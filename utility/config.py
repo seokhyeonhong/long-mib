@@ -30,14 +30,12 @@ class Config(dict):
         config.v_up      = np.array(config.v_up).astype(np.float32)
 
         # train/test dataset
-        config.trainset_dir = os.path.join(config.dataset_dir, "train")
-        config.testset_dir  = os.path.join(config.dataset_dir, "test")
-        config.trainset_npy = f"{config.trainset_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.testset_npy  = f"{config.testset_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.keyframe_trainset_npy = f"{config.trainset_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.keyframe_testset_npy  = f"{config.testset_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.traj_trainset_npy = f"{config.trainset_dir}/traj_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.traj_testset_npy  = f"{config.testset_dir}/traj_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.train_dir = os.path.join(config.dataset_dir, "train")
+        config.test_dir  = os.path.join(config.dataset_dir, "test")
+        config.trainset_npy = f"{config.train_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.testset_npy  = f"{config.test_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.keyframe_trainset_npy = f"{config.train_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.keyframe_testset_npy  = f"{config.test_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
 
         # directories to save and log training
         postfix = f"transition{config.min_transition}-{config.max_transition}"

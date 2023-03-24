@@ -13,15 +13,15 @@ from pymovis.vis import AppManager, MotionApp, YBOT_FBX_DICT, Render
 from pymovis.ops import rotation
 
 from utility.config import Config
-from utility.dataset import TrajectoryDataset
+from utility.dataset import MotionDataset
 from vis.visapp import SingleMotionApp
 
-class TrajApp(MotionApp):
-    def __init__(self, motion, model, prob, traj):
+class DatasetApp(MotionApp):
+    def __init__(self, motion, model, traj):
         super().__init__(motion, model, YBOT_FBX_DICT)
-        self.prob = prob
+        # self.prob = prob
         self.copy_model = copy.deepcopy(model)
-        self.prob_sorted_idx = torch.argsort(prob.squeeze(), descending=True)[11:]
+        # self.prob_sorted_idx = torch.argsort(prob.squeeze(), descending=True)[11:]
         self.prob_idx = 0
         self.traj = traj
 
@@ -59,7 +59,7 @@ class TrajApp(MotionApp):
 if __name__ == "__main__":
     config = Config.load("configs/sparse.json")
     character = FBX("dataset/ybot.fbx")
-    dataset = TrajectoryDataset(train=False, config=config)
+    dataset = MotionDataset(train=False, config=config)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     skeleton = dataset.skeleton
@@ -67,12 +67,12 @@ if __name__ == "__main__":
     for feature in dataloader:
         B, T, D = feature.shape
 
-        local_R6, root_p, kf_prob, traj = torch.split(feature, [D-9, 3, 1, 5], dim=-1)
+        local_R6, root_p, traj = torch.split(feature, [D-8, 3, 5], dim=-1)
         local_R = rotation.R6_to_R(local_R6.reshape(B, T, -1, 6))
 
         for b in range(B):
             motion = Motion.from_torch(skeleton, local_R[b], root_p[b])
 
             app_manager = AppManager()
-            app = TrajApp(motion, character.model(), kf_prob[b], traj[b])
+            app = DatasetApp(motion, character.model(), traj[b])
             app_manager.run(app)

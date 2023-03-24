@@ -74,33 +74,30 @@ def get_salient_poses(b, T, E_init):
                 insert_keyframes(S, cost, (k, e-1), kfselection, min_cost)
     return S
 
-def main():
+def get_keyframes(config, train=True):
     # device = torch.device("cpu")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/context.json")
     
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=True, config=config)
+    dataset    = MotionDataset(train=train, config=config)
     skeleton   = dataset.skeleton
 
-    motion_mean, motion_std = dataset.statistics(dim=(0, 1))
-    motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
-    
     # dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # initial cost matrix
-    results = []
-    GTs = []
-    for GT_feature in tqdm(dataloader):
+    save_dir = f"{config.train_dir if train else config.test_dir}/salient"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    for idx, GT_feature in tqdm(enumerate(dataloader)):
         GT_feature = GT_feature.to(device)
-        GTs.append(GT_feature)
         
         # split motion features to start from context frame
-        feature = GT_feature[:, config.context_frames-1:]
+        feature = GT_feature[:, config.context_frames-1:, :-5] # except root trajectory
         B, T, D = feature.shape
-        local_R6, root_p = feature[..., :-3], feature[..., -3:]
+        local_R6, root_p = torch.split(feature, [D-3, 3], dim=-1)
         local_R6 = local_R6.reshape(B, T, -1, 6)
         _, global_p = motionops.R6_fk(local_R6, root_p, skeleton)
 
@@ -149,28 +146,57 @@ def main():
                 E_init[:, i, j] = error[:, i]
 
         # dynamic programming for minimum cost path
-        salient_pose = util.run_parallel_sync(get_salient_poses, range(B), T=T, E_init=E_init.cpu().numpy())
-        results.extend(salient_pose)
+        salient_poses = util.run_parallel_sync(get_salient_poses, range(B), T=T, E_init=E_init.cpu().numpy())
+        save_data = []
+        for sp in salient_poses:
+            data = {}
+            for k in range(3, T):
+                data[k] = sp[(k, T-1)]
+            save_data.append(data)
+        with open(f"{save_dir}/{idx:08d}.pkl", "wb") as f:
+            pickle.dump(save_data, f)
 
-    # compute probability of keyframe
-    probs = []
-    for r in results:
-        # num_keyframes = T
-        num_keyframes = 32
-        prob = np.zeros(T)
-        for k in range(3, num_keyframes+1):
-            kfs = r[(k, T-1)]
+def generate_dataset(config, train=True):
+    save_dir = f"{config.train_dir if train else config.test_dir}/salient"
+    keyframe_data = []
+    for file in sorted(os.listdir(save_dir)):
+        if file.endswith(".pkl"):
+            with open(f"{save_dir}/{file}", "rb") as f:
+                keyframe_data.extend(pickle.load(f))
+
+    # dataset
+    dataset    = MotionDataset(train=train, config=config)
+    
+    # save data
+    save_features = []
+    for idx, motion in enumerate(dataset):
+        T, D = motion.shape
+        local_R6, root_p, traj = torch.split(motion, [D-3-5, 3, 5], dim=-1)
+
+        keyframes = keyframe_data[idx]
+        prob = torch.zeros(T - config.context_frames + 1)
+        for k in range(3, config.num_keyframes+1):
+            kfs = keyframes[k]
             for kf in kfs:
                 prob[kf] += 1
-        prob = prob / (num_keyframes-2)
-        prob = np.concatenate([np.ones(config.context_frames-1), prob])
-        probs.append(prob)
-    probs = np.stack(probs, axis=0)[..., None]
+        prob = prob / (config.num_keyframes-2)
+        prob = torch.cat([torch.ones(config.context_frames-1), prob])
+        prob = prob.unsqueeze(-1)
 
-    GTs = torch.cat(GTs, dim=0).cpu().numpy()
-    results = np.concatenate([GTs, probs], axis=-1)
+        feature = torch.cat([local_R6, root_p, prob, traj], dim=-1).cpu().numpy()
+        save_features.append(feature)
+
+    save_features = np.stack(save_features, axis=0)
+    np.save(f"{config.keyframe_trainset_npy if train else config.keyframe_testset_npy}", save_features)
+
+def main():
+    config = Config.load("configs/context.json")
     
-    np.save(config.keyframe_testset_npy, results)
+    get_keyframes(config, train=True)
+    generate_dataset(config, train=True)
+
+    get_keyframes(config, train=False)
+    generate_dataset(config, train=False)
 
 if __name__ == "__main__":
     main()
