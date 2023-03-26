@@ -39,16 +39,17 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
     print("Initializing model...")
-    ctx_model = ContextTransformer(dataset.shape[-1], Config.load("configs/context.json")).to(device)
+    ctx_model = ContextTransformer(dataset.shape[-1] - 5, Config.load("configs/context.json")).to(device)
     testutil.load_model(ctx_model, Config.load("configs/context.json"))
     ctx_model.eval()
 
-    det_model = DetailTransformer(dataset.shape[-1], config).to(device)
+    det_model = DetailTransformer(dataset.shape[-1] - 5, config).to(device)
     testutil.load_model(det_model, config)
     det_model.eval()
 
@@ -58,41 +59,40 @@ if __name__ == "__main__":
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
+            T = config.context_frames + config.max_transition + 1
+            GT_motion = GT_motion[:, :T, :-5]
             B, T, D = GT_motion.shape
 
-            T = config.context_frames + config.max_transition + 1
-            GT_motion = GT_motion[:, :T, :]
-            GT_motion = GT_motion.to(device)
-
             # GT motion
+            GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
             # ContextTransformer
             batch = (GT_motion - motion_mean) / motion_std
-            context_motion, mask = ctx_model.forward(batch, ratio_constrained=0, prob_constrained=0)
-            context_motion = mask * batch + (1 - mask) * context_motion
+            ctx_motion, mask = ctx_model.forward(batch, ratio_constrained=0, prob_constrained=0)
+            ctx_motion = mask * batch + (1 - mask) * ctx_motion
 
             # DetailTransformer
-            detail_motion, _ = det_model.forward(context_motion, mask)
-            detail_motion = mask * batch + (1 - mask) * detail_motion
+            det_motion, _ = det_model.forward(ctx_motion, mask)
+            det_motion = mask * batch + (1 - mask) * det_motion
 
             # denormalize
-            context_motion = context_motion * motion_std + motion_mean
-            detail_motion = detail_motion * motion_std + motion_mean
+            ctx_motion = ctx_motion * motion_std + motion_mean
+            det_motion = det_motion * motion_std + motion_mean
 
             # motion objects
-            context_local_R6, context_root_p = torch.split(context_motion, [D-3, 3], dim=-1)
-            context_local_R = rotation.R6_to_R(context_local_R6.reshape(B, T, -1, 6))
+            ctx_local_R6, ctx_root_p = torch.split(ctx_motion, [D-3, 3], dim=-1)
+            ctx_local_R = rotation.R6_to_R(ctx_local_R6.reshape(B, T, -1, 6))
 
-            detail_local_R6, detail_root_p = torch.split(detail_motion, [D-3, 3], dim=-1)
-            detail_local_R = rotation.R6_to_R(detail_local_R6.reshape(B, T, -1, 6))
+            det_local_R6, det_root_p = torch.split(det_motion, [D-3, 3], dim=-1)
+            det_local_R = rotation.R6_to_R(det_local_R6.reshape(B, T, -1, 6))
 
             # animation
-            GT_motion      = get_moiton(skeleton, GT_local_R, GT_root_p)
-            context_motion = get_moiton(skeleton, context_local_R, context_root_p)
-            detail_motion  = get_moiton(skeleton, detail_local_R, detail_root_p)
+            GT_motion  = get_moiton(skeleton, GT_local_R, GT_root_p)
+            ctx_motion = get_moiton(skeleton, ctx_local_R, ctx_root_p)
+            det_motion = get_moiton(skeleton, det_local_R, det_root_p)
 
             app_manager = AppManager()
-            app = DetailMotionApp(GT_motion, context_motion, detail_motion, ybot.model(), T)
+            app = DetailMotionApp(GT_motion, ctx_motion, det_motion, ybot.model(), T)
             app_manager.run(app)

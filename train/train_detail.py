@@ -32,8 +32,9 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     feet_ids = []
     for name in config.contact_joint_names:
@@ -41,11 +42,11 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    ctx_model = ContextTransformer(dataset.shape[-1], config).to(device)
+    ctx_model = ContextTransformer(dataset.shape[-1] - 5, Config.load("configs/context.json")).to(device) # exclude trajectory
     testutil.load_model(ctx_model, Config.load("configs/context.json"))
     ctx_model.eval()
 
-    det_model = DetailTransformer(dataset.shape[-1], config).to(device)
+    det_model = DetailTransformer(dataset.shape[-1] - 5, config).to(device) # exclude trajectory
     optim = torch.optim.Adam(det_model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(det_model, optim, config, scheduler)
@@ -68,14 +69,14 @@ if __name__ == "__main__":
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
+            transition_frames = random.randint(config.min_transition, config.max_transition)
+            T = config.context_frames + config.max_transition + 1
+            # T = config.context_frames + transition_frames + 1
+            GT_motion = GT_motion[:, :T, :-5] # exclude trajectory
             B, T, D = GT_motion.shape
 
-            transition_frames = random.randint(config.min_transition, config.max_transition)
-            T = config.context_frames + transition_frames + 1
-            GT_motion = GT_motion[:, :T, :]
-            GT_motion = GT_motion.to(device)
-
             # GT
+            GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
@@ -86,10 +87,9 @@ if __name__ == "__main__":
             GT_contact = (GT_feet_v < config.contact_vel_threshold).float()
 
             # forward - ContextTransformer
-            with torch.no_grad():
-                batch = (GT_motion - motion_mean) / motion_std
-                ctx_motion, mask = ctx_model.forward(batch)
-                ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
+            batch = (GT_motion - motion_mean) / motion_std
+            ctx_motion, mask = ctx_model.forward(batch, ratio_constrained=0.0, prob_constrained=0.0)
+            ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
 
             # forward - DetailTransformer
             pred_motion, pred_contact = det_model.forward(ctx_motion, mask)
@@ -104,10 +104,10 @@ if __name__ == "__main__":
             pred_feet_v = torch.cat([pred_feet_v[:, 0:1], pred_feet_v], dim=1)
             
             # loss
-            loss_rot     = config.weight_rot     * F.l1_loss(pred_local_R6, GT_local_R6)
-            loss_pos     = config.weight_pos     * F.l1_loss(pred_global_p, GT_global_p)
-            loss_contact = config.weight_contact * F.l1_loss(pred_contact, GT_contact)
-            loss_foot    = config.weight_foot    * F.l1_loss(pred_contact.detach() * pred_feet_v, torch.zeros_like(pred_feet_v))
+            loss_rot     = config.weight_rot     * F.l1_loss(pred_local_R6[:, config.context_frames:-1], GT_local_R6[:, config.context_frames:-1])
+            loss_pos     = config.weight_pos     * F.l1_loss(pred_global_p[:, config.context_frames:-1], GT_global_p[:, config.context_frames:-1])
+            loss_contact = config.weight_contact * F.l1_loss(pred_contact[:, config.context_frames:-1], GT_contact[:, config.context_frames:-1])
+            loss_foot    = config.weight_foot    * F.l1_loss(pred_contact[:, config.context_frames:-1].detach() * pred_feet_v[:, config.context_frames:-1], torch.zeros_like(pred_feet_v[:, config.context_frames:-1]))
             loss = loss_rot + loss_pos + loss_contact + loss_foot
 
             # backward
