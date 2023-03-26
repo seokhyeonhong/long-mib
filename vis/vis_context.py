@@ -32,12 +32,13 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
     print("Initializing model...")
-    model = ContextTransformer(dataset.shape[-1], config).to(device)
+    model = ContextTransformer(dataset.shape[-1] - 5, config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 
@@ -47,11 +48,11 @@ if __name__ == "__main__":
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
-            B, T, D = GT_motion.shape
-
             # T = config.context_frames + 121
             T = config.context_frames + config.max_transition + 1
-            GT_motion = GT_motion[:, :T, :]
+            GT_motion = GT_motion[:, :T, :-5] # exclude trajectory
+            B, T, D = GT_motion.shape
+
             GT_motion = GT_motion.to(device)
 
             # GT motion

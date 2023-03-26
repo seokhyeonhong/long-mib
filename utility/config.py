@@ -29,13 +29,17 @@ class Config(dict):
         config.v_forward = np.array(config.v_forward).astype(np.float32)
         config.v_up      = np.array(config.v_up).astype(np.float32)
 
-        # train/test dataset
-        config.train_dir = os.path.join(config.dataset_dir, "train")
-        config.test_dir  = os.path.join(config.dataset_dir, "test")
-        config.trainset_npy = f"{config.train_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.testset_npy  = f"{config.test_dir}/length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.keyframe_trainset_npy = f"{config.train_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
-        config.keyframe_testset_npy  = f"{config.test_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        # motion dataset
+        config.train_dir    = os.path.join(config.dataset_dir, "train")
+        config.test_dir     = os.path.join(config.dataset_dir, "test")
+        config.trainset_npy = f"{config.train_dir}/motion_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+        config.testset_npy  = f"{config.test_dir}/motion_length{config.window_length}_offset{config.window_offset}_fps{config.fps}.npy"
+
+        # keyframe dataset
+        config.keyframe_train_dir    = os.path.join(config.train_dir, f"keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}")
+        config.keyframe_test_dir     = os.path.join(config.test_dir,  f"keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}")
+        config.keyframe_trainset_npy = f"{config.train_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}_kf{config.num_keyframes}.npy"
+        config.keyframe_testset_npy  = f"{config.test_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}_kf{config.num_keyframes}.npy"
 
         # directories to save and log training
         postfix = f"transition{config.min_transition}-{config.max_transition}"

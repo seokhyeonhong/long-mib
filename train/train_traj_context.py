@@ -57,15 +57,12 @@ if __name__ == "__main__":
         "pos":    0,
         "smooth": 0,
     }
+    breakpoint()
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
         # max_transition = min(config.min_transition + epoch, config.max_transition)
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             B, T, D = GT_motion.shape
-
-            transition_frames = random.randint(config.min_transition, config.max_transition)
-            T = config.context_frames + transition_frames + 1
-            GT_motion = GT_motion[:, :T, :]
 
             # GT
             GT_motion = GT_motion.to(device)
@@ -81,7 +78,7 @@ if __name__ == "__main__":
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-8, 3], dim=-1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
-            
+
             # loss
             loss_rot = config.weight_rot * F.l1_loss(pred_local_R6, GT_local_R6)
             loss_pos = config.weight_pos * F.l1_loss(pred_global_p, GT_global_p)

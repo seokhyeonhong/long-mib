@@ -18,7 +18,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import MotionDataset
 from vis.visapp import ContextMotionApp
-from model.twostage import TrajContextTransformer
+from model.ours import TrajectoryTransformer
 
 if __name__ == "__main__":
     # initial settings
@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     # dataset
     print("Loading dataset...")
-    dataset    = MotionDataset(train=True, config=config)
+    dataset    = MotionDataset(train=False, config=config)
     skeleton   = dataset.skeleton
     v_forward  = torch.from_numpy(config.v_forward).to(device)
 
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = TrajContextTransformer(dataset.shape[-1], config).to(device)
+    model = TrajectoryTransformer(dataset.shape[-1], config).to(device)
     testutil.load_model(model, config)
     model.eval()
 
@@ -54,28 +54,24 @@ if __name__ == "__main__":
             # T = config.context_frames + 121
             T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :]
-            GT_motion = GT_motion.to(device)
 
             # GT motion
             GT_motion = GT_motion.to(device)
-            GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
+            noise = torch.arange(T).to(device).float().unsqueeze(0).unsqueeze(-1) / 20
+            noise[:, :config.context_frames] = 0
+            GT_motion[..., -5:-3] += noise
+            GT_motion[..., (-8, -6)] += noise
+            GT_local_R6, GT_root_p, GT_traj = torch.split(GT_motion, [D-8, 3, 5], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
-            
             GT_local_R = rotation.R6_to_R(GT_local_R6)
-            GT_root_R = GT_local_R[:, :, 0]
-            GT_forward = F.normalize(torch.matmul(GT_root_R, v_forward)  * torchconst.XZ(device), dim=-1)
 
-            _, GT_global_p = motionops.R_fk(GT_local_R, GT_root_p, skeleton)
-            GT_root_xz = GT_root_p[..., (0, 2)]
-
-            # CoarseNet
+            # forward
             batch = (GT_motion - motion_mean) / motion_std
-            batch = torch.cat([batch, GT_forward, GT_root_xz], dim=-1)
             pred_motion, _ = model.forward(batch, ratio_constrained=0, prob_constrained=0)
             # pred_motion = mask * batch + (1 - mask) * pred_motion
-            pred_motion = pred_motion * motion_std + motion_mean
+            pred_motion = pred_motion * motion_std[..., :-5] + motion_mean[..., :-5] # exclude traj features
 
-            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
+            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-8, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
             # animation

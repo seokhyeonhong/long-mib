@@ -86,12 +86,14 @@ def get_keyframes(config, train=True):
     # dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
     dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
 
-    # initial cost matrix
-    save_dir = f"{config.train_dir if train else config.test_dir}/salient"
+    # directory to save
+    save_dir = config.keyframe_train_dir if train else config.keyframe_test_dir
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
+    # get salient keyframes
     for idx, GT_feature in tqdm(enumerate(dataloader)):
+        GT_feature = GT_feature[:, :config.context_frames+config.max_transition+1]
         GT_feature = GT_feature.to(device)
         
         # split motion features to start from context frame
@@ -157,7 +159,7 @@ def get_keyframes(config, train=True):
             pickle.dump(save_data, f)
 
 def generate_dataset(config, train=True):
-    save_dir = f"{config.train_dir if train else config.test_dir}/salient"
+    save_dir = config.keyframe_train_dir if train else config.keyframe_test_dir
     keyframe_data = []
     for file in sorted(os.listdir(save_dir)):
         if file.endswith(".pkl"):
@@ -169,7 +171,8 @@ def generate_dataset(config, train=True):
     
     # save data
     save_features = []
-    for idx, motion in enumerate(dataset):
+    for idx, motion in tqdm(enumerate(dataset)):
+        motion = motion[:config.context_frames+config.max_transition+1]
         T, D = motion.shape
         local_R6, root_p, traj = torch.split(motion, [D-3-5, 3, 5], dim=-1)
 
@@ -188,15 +191,15 @@ def generate_dataset(config, train=True):
 
     save_features = np.stack(save_features, axis=0)
     print(f"save_features.shape: {save_features.shape}")
-    np.save(f"{config.keyframe_trainset_npy if train else config.keyframe_testset_npy}", save_features)
+    np.save(config.keyframe_trainset_npy if train else config.keyframe_testset_npy, save_features)
 
 def main():
-    config = Config.load("configs/context.json")
+    config = Config.load("configs/traj_context.json")
 
-    get_keyframes(config, train=True)
+    # get_keyframes(config, train=True)
     generate_dataset(config, train=True)
 
-    get_keyframes(config, train=False)
+    # get_keyframes(config, train=False)
     generate_dataset(config, train=False)
 
 if __name__ == "__main__":

@@ -149,22 +149,19 @@ class KeyframeTransformer(nn.Module):
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model * 2, self.d_model),
+            nn.Linear(2, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model),
+            nn.Linear(1, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
-        
-        # positional embedding
-        self.embedding = RelativeSinusoidalPositionalEmbedding(self.d_model, max_len=300) # arbitrary max_len
 
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
@@ -179,33 +176,29 @@ class KeyframeTransformer(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
-            nn.Linear(self.d_model, self.d_motion + 1),
+            nn.Linear(self.d_model, self.d_motion - 5), # except trajectory features
         )
     
-    def forward(self, x, sparse_frames):
+    def forward(self, x, ratio_constrained=0.1, prob_constrained=0.5):
         B, T, D = x.shape
         
         # mask
-        batch_mask, atten_mask = get_mask(x, self.config.context_frames)
+        batch_mask, _ = get_mask(x, self.config.context_frames, ratio_constrained=ratio_constrained, prob_constrained=prob_constrained)
+        batch_mask[..., -5:] = 1 # no mask for trajectory
         masked_x = x * batch_mask
         x = self.encoder(torch.cat([masked_x, batch_mask], dim=-1))
 
         # add keyframe positional embedding
-        keyframe_pos = get_keyframe_relative_position(sparse_frames, self.config.context_frames).to(x.device)
-        keyframe_pos = self.embedding.forward(keyframe_pos).reshape(T, self.d_model*2)
+        keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
         x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance
-        frames = torch.cat([
-            torch.flip(sparse_frames[1:], dims=[0]) * -1,
-            sparse_frames
-        ])
-        rel_dist = self.embedding.forward(frames)
-        lookup_table = self.relative_pos_encoder(rel_dist)
+        rel_dist = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
+        lookup_table = self.relative_pos_encoder(rel_dist) # (2T-1, d_model)
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=atten_mask) # self-attention
+            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=None)
             x = self.pffn_layers[i](x)
         
         # decoder
@@ -213,7 +206,5 @@ class KeyframeTransformer(nn.Module):
             x = self.layer_norm(x)
         
         x = self.decoder(x)
-        motion, keyframe_prob = torch.split(x, [self.d_motion, 1], dim=-1) # (B, T, D), (B, T, 1)
-        keyframe_prob = torch.softmax(keyframe_prob, dim=1) # (B, T, 1)
 
-        return motion, keyframe_prob, batch_mask
+        return x, batch_mask
