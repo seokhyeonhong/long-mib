@@ -29,6 +29,8 @@ class MotionDataset(Dataset):
         return self.features[idx]
 
     def statistics(self, dim=(0, 1)):
+        print(f"Calculating MotionDataset mean and std, dim={dim}...")
+        
         # load and return mean and std if they exist
         mean_path = os.path.join(self.config.dataset_dir, f"motion_mean_{dim}.pt")
         std_path  = os.path.join(self.config.dataset_dir, f"motion_std_{dim}.pt")
@@ -77,6 +79,8 @@ class KeyframeDataset(Dataset):
         return self.features[idx]
 
     def statistics(self, dim=(0, 1)):
+        print(f"Calculating KeyframeDataset mean and std, dim={dim}...")
+
         # load and return mean and std if they exist
         mean_path = os.path.join(self.config.dataset_dir, f"keyframe_maxtrans{self.config.max_transition}_mean_{dim}.pt")
         std_path  = os.path.join(self.config.dataset_dir, f"keyframe_maxtrans{self.config.max_transition}_std_{dim}.pt")

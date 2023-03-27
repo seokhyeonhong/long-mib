@@ -34,7 +34,7 @@ if __name__ == "__main__":
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
     
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     feet_ids = []
     for name in config.contact_joint_names:
@@ -70,8 +70,7 @@ if __name__ == "__main__":
     for epoch in range(init_epoch, config.epochs+1):
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             transition_frames = random.randint(config.min_transition, config.max_transition)
-            T = config.context_frames + config.max_transition + 1
-            # T = config.context_frames + transition_frames + 1
+            T = config.context_frames + transition_frames + 1
             GT_motion = GT_motion[:, :T, :-5] # exclude trajectory
             B, T, D = GT_motion.shape
 
@@ -87,9 +86,10 @@ if __name__ == "__main__":
             GT_contact = (GT_feet_v < config.contact_vel_threshold).float()
 
             # forward - ContextTransformer
-            batch = (GT_motion - motion_mean) / motion_std
-            ctx_motion, mask = ctx_model.forward(batch, ratio_constrained=0.0, prob_constrained=0.0)
-            ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
+            with torch.no_grad():
+                batch = (GT_motion - motion_mean) / motion_std
+                ctx_motion, mask = ctx_model.forward(batch)
+                ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
 
             # forward - DetailTransformer
             pred_motion, pred_contact = det_model.forward(ctx_motion, mask)

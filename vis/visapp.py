@@ -53,7 +53,25 @@ class ContextMotionApp(MotionApp):
         # draw target
         self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
         Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 40])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 70])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+        
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 100])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+        
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 130])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
     
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 160])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+
+        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 190])
+        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
+
     def render_text(self):
         super().render_text()
         Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()

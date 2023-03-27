@@ -20,7 +20,7 @@ from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
 from model.ours import KeyframeTransformer
-from model.twostage import ContextTransformer
+from model.twostage import ContextTransformer, DetailTransformer
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, keyframes):
@@ -44,11 +44,11 @@ class KeyframeApp(MotionApp):
     def render(self):
         super().render(render_model=False)
 
-        self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
-        Render.model(self.GT_model).draw()
+        # self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
+        # Render.model(self.GT_model).draw()
 
-        # self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
-        # Render.model(self.pred_model).draw()
+        self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
+        Render.model(self.pred_model).draw()
 
         # nearest but smaller keyframe
         keyframe = min([k for k in self.keyframes if k > self.frame], default=0)
@@ -70,8 +70,8 @@ if __name__ == "__main__":
     skeleton   = dataset.skeleton
     v_forward  = torch.from_numpy(skeleton.v_forward).to(device)
 
-    motion_mean, motion_std = dataset.statistics(dim=(0, 1))
-    motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    kf_mean, kf_std = dataset.statistics(dim=(0, 1))
+    kf_mean, kf_std = kf_mean.to(device), kf_std.to(device)
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
@@ -84,6 +84,10 @@ if __name__ == "__main__":
     ctx = ContextTransformer(dataset.shape[-1] - 6, Config.load("configs/context.json")).to(device) # exclude trajectory and prob
     testutil.load_model(ctx, Config.load("configs/context.json"))
     ctx.eval()
+
+    det = DetailTransformer(dataset.shape[-1] - 6, Config.load("configs/detail.json")).to(device) # exclude trajectory and prob
+    testutil.load_model(det, Config.load("configs/detail.json"))
+    det.eval()
 
     temp_dataset = MotionDataset(train=False, config=Config.load("configs/context.json"))
     temp_mean, temp_std = temp_dataset.statistics(dim=(0, 1))
@@ -104,9 +108,9 @@ if __name__ == "__main__":
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
             # forward
-            batch = (GT_motion - motion_mean) / motion_std
+            batch = (GT_motion - kf_mean) / kf_std
             pred_motion, _ = model.forward(batch)
-            pred_motion = pred_motion * motion_std[..., :-5] + motion_mean[..., :-5] # exclude traj features
+            pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
@@ -115,23 +119,27 @@ if __name__ == "__main__":
             results = []
             keyframes = []
             for b in tqdm(range(B)):
-                top_keyframes = torch.topk(pred_kf_prob[b:b+1, config.context_frames+1:-1], 10, dim=1).indices + config.context_frames + 1
+                num_k = 7
+                top_keyframes = torch.topk(pred_kf_prob[b:b+1, config.context_frames+1:-1], num_k, dim=1).indices + config.context_frames + 1
                 top_keyframes = top_keyframes.reshape(-1).sort().values
                 for k in top_keyframes:
                     keyframes.append(k.item() + b * T)
+                    print(k.item() + b * T)
                 keyframes.append((b+1)*T-1)
+                print((b+1)*T-1)
+                breakpoint()
 
                 # copy pseudo-GT motion
-                ctx_local_R6 = pred_local_R6[b:b+1].clone()
-                ctx_root_p = pred_root_p[b:b+1].clone()
-                # ctx_local_R6 = GT_local_R6[b:b+1].clone()
-                # ctx_root_p = GT_root_p[b:b+1].clone()
+                # ctx_local_R6 = pred_local_R6[b:b+1].clone()
+                # ctx_root_p = pred_root_p[b:b+1].clone()
+                ctx_local_R6 = GT_local_R6[b:b+1].clone()
+                ctx_root_p = GT_root_p[b:b+1].clone()
                 ctx_batch = torch.cat([ctx_local_R6, ctx_root_p], dim=-1)
                 ctx_batch = (ctx_batch - temp_mean) / temp_std
 
                 # recurrent prediction
                 frame_from, frame_to = 0, top_keyframes[0]
-                for f in range(11):
+                for f in range(num_k+1):
                     # input batch
                     input_batch = ctx_batch[:, frame_from:frame_to+1]
                     input_batch = input_batch * temp_std + temp_mean
@@ -159,6 +167,8 @@ if __name__ == "__main__":
                     # forward and denormalize
                     ctx_pred, ctx_mask = ctx.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
                     ctx_pred = ctx_mask * input_batch + (1 - ctx_mask) * ctx_pred
+                    ctx_pred, _ = det.forward(ctx_pred, ctx_mask)
+                    ctx_pred = ctx_mask * input_batch + (1 - ctx_pred) * ctx_pred
                     ctx_pred = ctx_pred * temp_std + temp_mean
 
                     # re-update
@@ -175,7 +185,7 @@ if __name__ == "__main__":
                     ctx_batch[:, frame_from:frame_to+1] = ctx_pred
 
                     frame_from = frame_to - config.context_frames + 1
-                    frame_to = top_keyframes[f+1] if f < 9 else T
+                    frame_to = top_keyframes[f+1] if f < num_k-1 else T
                 
                 results.append(ctx_batch)
             
