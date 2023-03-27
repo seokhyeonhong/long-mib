@@ -97,8 +97,8 @@ if __name__ == "__main__":
                 # forward and denormalize
                 ctx_pred, ctx_mask = model.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
                 ctx_pred = ctx_mask * input_batch + (1 - ctx_mask) * ctx_pred
-                # ctx_pred, _ = det_model.forward(ctx_pred, ctx_mask)
-                # ctx_pred = ctx_mask * input_batch + (1 - ctx_mask) * ctx_pred
+                ctx_pred, _ = det_model.forward(ctx_pred, ctx_mask)
+                ctx_pred = ctx_mask * input_batch + (1 - ctx_mask) * ctx_pred
                 ctx_pred = ctx_pred * motion_std + motion_mean
 
                 # re-update

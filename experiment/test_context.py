@@ -29,12 +29,13 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
-    model = ContextTransformer(dataset.shape[-1], config).to(device)
+    model = ContextTransformer(dataset.shape[-1] - 5, config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 
@@ -42,13 +43,12 @@ if __name__ == "__main__":
     l2p, l2q, npss = [], [], []
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
+            T = config.context_frames + config.max_transition + 1
+            GT_motion = GT_motion[:, :T, :-5]
             B, T, D = GT_motion.shape
 
-            T = config.context_frames + config.max_transition + 1
-            GT_motion = GT_motion[:, :T, :]
-            GT_motion = GT_motion.to(device)
-
             # GT motion
+            GT_motion = GT_motion.to(device)
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
             GT_global_R, GT_global_p = motionops.R_fk(GT_local_R, GT_root_p, skeleton)

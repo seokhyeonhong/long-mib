@@ -89,7 +89,7 @@ if __name__ == "__main__":
             det_local_R = rotation.R6_to_R(det_local_R6.reshape(B, T, -1, 6))
 
             # animation
-            GT_motion  = get_moiton(skeleton, GT_local_R, GT_root_p)
+            GT_motion  = get_moiton(skeleton, GT_local_R,  GT_root_p)
             ctx_motion = get_moiton(skeleton, ctx_local_R, ctx_root_p)
             det_motion = get_moiton(skeleton, det_local_R, det_root_p)
 

@@ -167,21 +167,20 @@ def generate_dataset(config, train=True):
                 keyframe_data.extend(pickle.load(f))
 
     # dataset
-    dataset    = MotionDataset(train=train, config=config)
+    dataset = MotionDataset(train=train, config=config)
     
     # save data
     save_features = []
     for idx, motion in tqdm(enumerate(dataset)):
         motion = motion[:config.context_frames+config.max_transition+1]
         T, D = motion.shape
-        local_R6, root_p, traj = torch.split(motion, [D-3-5, 3, 5], dim=-1)
+        local_R6, root_p, traj = torch.split(motion, [D-8, 3, 5], dim=-1)
 
         keyframes = keyframe_data[idx]
         prob = torch.zeros(T - config.context_frames + 1)
         for k in range(3, config.num_keyframes+1):
             kfs = keyframes[k]
-            for kf in kfs:
-                prob[kf] += 1
+            prob[kfs] += 1
         prob = prob / (config.num_keyframes-2)
         prob = torch.cat([torch.ones(config.context_frames-1), prob])
         prob = prob.unsqueeze(-1)
@@ -190,8 +189,8 @@ def generate_dataset(config, train=True):
         save_features.append(feature)
 
     save_features = np.stack(save_features, axis=0)
-    print(f"save_features.shape: {save_features.shape}")
     np.save(config.keyframe_trainset_npy if train else config.keyframe_testset_npy, save_features)
+    print(f"save_features.shape: {save_features.shape} saved to {config.keyframe_trainset_npy if train else config.keyframe_testset_npy}")
 
 def main():
     config = Config.load("configs/traj_context.json")
