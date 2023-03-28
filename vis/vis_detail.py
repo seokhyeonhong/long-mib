@@ -56,6 +56,10 @@ if __name__ == "__main__":
     # character
     ybot = FBX("dataset/ybot.fbx")
 
+    noise_jids = [i for i in range(dataset.shape[-1] - 5)]
+    for i in [102, 103, 104, 105, 106, 107, 126, 127, 128, 129, 130, 131]:
+        noise_jids.remove(i)
+
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
@@ -65,8 +69,11 @@ if __name__ == "__main__":
 
             # GT motion
             GT_motion = GT_motion.to(device)
+            GT_motion[:, -1, noise_jids] += torch.randn_like(GT_motion[:, -1, noise_jids]) * 0.1
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
+            GT_local_R6 = rotation.R_to_R6(GT_local_R).reshape(B, T, -1)
+            GT_motion = torch.cat([GT_local_R6, GT_root_p], dim=-1)
 
             # ContextTransformer
             batch = (GT_motion - motion_mean) / motion_std
@@ -80,6 +87,7 @@ if __name__ == "__main__":
             # denormalize
             ctx_motion = ctx_motion * motion_std + motion_mean
             det_motion = det_motion * motion_std + motion_mean
+            GT_motion  = batch * motion_std + motion_mean
 
             # motion objects
             ctx_local_R6, ctx_root_p = torch.split(ctx_motion, [D-3, 3], dim=-1)
@@ -87,6 +95,9 @@ if __name__ == "__main__":
 
             det_local_R6, det_root_p = torch.split(det_motion, [D-3, 3], dim=-1)
             det_local_R = rotation.R6_to_R(det_local_R6.reshape(B, T, -1, 6))
+
+            GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
+            GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
             # animation
             GT_motion  = get_moiton(skeleton, GT_local_R,  GT_root_p)

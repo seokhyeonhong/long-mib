@@ -54,6 +54,7 @@ if __name__ == "__main__":
             B, T, D = GT_motion.shape
 
             GT_motion = GT_motion.to(device)
+            GT_motion[:, -1] += torch.randn_like(GT_motion[:, -1]) * 0.01
 
             # GT motion
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)

@@ -1,7 +1,7 @@
 # directories
 __pycache__/
-log/
-save/
+log*/
+save*/
 capture/
 
 # file types

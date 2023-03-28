@@ -57,7 +57,6 @@ if __name__ == "__main__":
         "pos":    0,
         "smooth": 0,
     }
-    breakpoint()
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
         # max_transition = min(config.min_transition + epoch, config.max_transition)

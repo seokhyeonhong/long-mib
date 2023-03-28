@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 import copy
-import glm
+import glm, glfw
 from tqdm import tqdm
 
 from pymovis.utils import util, torchconst
@@ -23,13 +23,14 @@ from model.ours import KeyframeTransformer
 from model.twostage import ContextTransformer, DetailTransformer
 
 class KeyframeApp(MotionApp):
-    def __init__(self, GT_motion, pred_motion, model, keyframes):
+    def __init__(self, GT_motion, pred_motion, model, keyframes, time_per_motion):
         super().__init__(GT_motion, model, YBOT_FBX_DICT)
 
         self.GT_motion = GT_motion
         self.pred_motion = pred_motion
 
         self.keyframes = keyframes
+        self.time_per_motion = time_per_motion
 
         self.GT_model = model
         self.GT_model.set_source_skeleton(self.GT_motion.skeleton, YBOT_FBX_DICT)
@@ -41,22 +42,42 @@ class KeyframeApp(MotionApp):
         self.key_model.set_source_skeleton(self.pred_motion.skeleton, YBOT_FBX_DICT)
         self.key_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
 
+        self.show_GT = True
+        self.show_pred = True
+
     def render(self):
         super().render(render_model=False)
 
-        # self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
-        # Render.model(self.GT_model).draw()
+        if self.show_GT:
+            self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
+            Render.model(self.GT_model).draw()
 
-        self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
-        Render.model(self.pred_model).draw()
+        # predicted pose
+        if self.show_pred:
+            self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
+            Render.model(self.pred_model).draw()
+
+        # target pose per motion
+        ith_motion = self.frame // self.time_per_motion
+        self.GT_model.set_pose_by_source(self.pred_motion.poses[(ith_motion+1) * self.time_per_motion - 1])
+        Render.model(self.GT_model).set_all_alphas(0.5).draw()
 
         # nearest but smaller keyframe
         keyframe = min([k for k in self.keyframes if k > self.frame], default=0)
         self.key_model.set_pose_by_source(self.pred_motion.poses[keyframe])
         Render.model(self.key_model).set_all_alphas(0.5).draw()
 
+
     def render_text(self):
         super().render_text()
+
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+
+        if key == glfw.KEY_Q and action == glfw.PRESS:
+            self.show_GT = not self.show_GT
+        if key == glfw.KEY_W and action == glfw.PRESS:
+            self.show_pred = not self.show_pred
 
 if __name__ == "__main__":
     # initial settings
@@ -89,13 +110,14 @@ if __name__ == "__main__":
     testutil.load_model(det, Config.load("configs/detail.json"))
     det.eval()
 
-    temp_dataset = MotionDataset(train=False, config=Config.load("configs/context.json"))
-    temp_mean, temp_std = temp_dataset.statistics(dim=(0, 1))
-    temp_mean, temp_std = temp_mean.to(device), temp_std.to(device)
-    temp_mean, temp_std = temp_mean[..., :-5], temp_std[..., :-5] # exclude trajectory
+    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/context.json")).statistics(dim=(0, 1))
+    motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
 
     # character
     ybot = FBX("dataset/ybot.fbx")
+
+    toe_jids = [102, 103, 104, 105, 106, 107, 126, 127, 128, 129, 130, 131]
 
     # training loop
     with torch.no_grad():
@@ -111,38 +133,47 @@ if __name__ == "__main__":
             batch = (GT_motion - kf_mean) / kf_std
             pred_motion, _ = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
+            pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
+            pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
-            pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
+            pred_local_R6 = rotation.R_to_R6(rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))).reshape(B, T, -1)
 
             # for each batch
             results = []
-            keyframes = []
+            total_keyframes = []
             for b in tqdm(range(B)):
-                num_k = 7
-                top_keyframes = torch.topk(pred_kf_prob[b:b+1, config.context_frames+1:-1], num_k, dim=1).indices + config.context_frames + 1
-                top_keyframes = top_keyframes.reshape(-1).sort().values
-                for k in top_keyframes:
-                    keyframes.append(k.item() + b * T)
-                    print(k.item() + b * T)
-                keyframes.append((b+1)*T-1)
-                print((b+1)*T-1)
-                breakpoint()
+                # adaptive keyframe selection
+                keyframes = []
+                transition_start = config.context_frames
+                while transition_start < T:
+                    transition_end = min(transition_start + config.fps, T-1)
+                    if transition_end == T-1:
+                        keyframes.append(T-1)
+                        break
 
-                # copy pseudo-GT motion
-                # ctx_local_R6 = pred_local_R6[b:b+1].clone()
-                # ctx_root_p = pred_root_p[b:b+1].clone()
-                ctx_local_R6 = GT_local_R6[b:b+1].clone()
-                ctx_root_p = GT_root_p[b:b+1].clone()
-                ctx_batch = torch.cat([ctx_local_R6, ctx_root_p], dim=-1)
-                ctx_batch = (ctx_batch - temp_mean) / temp_std
+                    top_keyframe = torch.topk(pred_kf_prob[b:b+1, transition_start+5:transition_end+1], 1, dim=1).indices + transition_start+5
+                    top_keyframe = top_keyframe.item()
+                    keyframes.append(top_keyframe)
+                    transition_start = top_keyframe + 1
+                
+                for kf in keyframes:
+                    total_keyframes.append(b*T + kf)
+
+                # motion batch from keyframe prediction
+                local_R6 = pred_local_R6[b:b+1].clone()
+                root_p = pred_root_p[b:b+1].clone()
+                # local_R6 = GT_local_R6[b:b+1].clone()
+                # root_p = GT_root_p[b:b+1].clone()
+                motion_batch = torch.cat([local_R6, root_p], dim=-1)
+                motion_batch = (motion_batch - motion_mean) / motion_std
 
                 # recurrent prediction
-                frame_from, frame_to = 0, top_keyframes[0]
-                for f in range(num_k+1):
+                frame_start, frame_end = 0, keyframes[0]
+                for f in range(len(keyframes)+1):
                     # input batch
-                    input_batch = ctx_batch[:, frame_from:frame_to+1]
-                    input_batch = input_batch * temp_std + temp_mean
+                    input_batch = motion_batch[:, frame_start:frame_end+1]
+                    input_batch = input_batch * motion_std + motion_mean
                     local_R6, root_p = torch.split(input_batch, [D-9, 3], dim=-1)
 
                     # delta rotation to fit at the last context frame
@@ -162,14 +193,14 @@ if __name__ == "__main__":
                     # update
                     input_batch[:, :, :6] = root_R6
                     input_batch[:, :, -3:] = root_p
-                    input_batch = (input_batch - temp_mean) / temp_std
+                    input_batch = (input_batch - motion_mean) / motion_std
 
                     # forward and denormalize
-                    ctx_pred, ctx_mask = ctx.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
-                    ctx_pred = ctx_mask * input_batch + (1 - ctx_mask) * ctx_pred
-                    ctx_pred, _ = det.forward(ctx_pred, ctx_mask)
-                    ctx_pred = ctx_mask * input_batch + (1 - ctx_pred) * ctx_pred
-                    ctx_pred = ctx_pred * temp_std + temp_mean
+                    pred_motion, mask = ctx.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
+                    pred_motion = mask * input_batch + (1 - mask) * pred_motion
+                    pred_motion, _ = det.forward(pred_motion, mask)
+                    pred_motion = mask * input_batch + (1 - mask) * pred_motion
+                    pred_motion = pred_motion * motion_std + motion_mean
 
                     # re-update
                     local_R = rotation.R6_to_R(local_R6.reshape(local_R6.shape[0], local_R6.shape[1], -1, 6))
@@ -177,21 +208,21 @@ if __name__ == "__main__":
                     root_R = torch.matmul(delta_R.transpose(-1, -2), root_R)
                     root_R6 = rotation.R_to_R6(root_R)
                     root_p = torch.matmul(delta_R.transpose(-1, -2), root_p.unsqueeze(-1)).squeeze(-1) + delta_p
-                    ctx_pred[:, :, :6] = root_R6
-                    ctx_pred[:, :, -3:] = root_p
+                    pred_motion[:, :, :6] = root_R6
+                    pred_motion[:, :, -3:] = root_p
 
                     # re-normalize
-                    ctx_pred = (ctx_pred - temp_mean) / temp_std
-                    ctx_batch[:, frame_from:frame_to+1] = ctx_pred
+                    pred_motion = (pred_motion - motion_mean) / motion_std
+                    motion_batch[:, frame_start:frame_end+1] = pred_motion
 
-                    frame_from = frame_to - config.context_frames + 1
-                    frame_to = top_keyframes[f+1] if f < num_k-1 else T
+                    frame_start = frame_end - config.context_frames + 1
+                    frame_end = keyframes[f+1] if f < len(keyframes)-1 else T
                 
-                results.append(ctx_batch)
+                results.append(motion_batch.clone())
             
             # concatenate
             pred_motion = torch.cat(results, dim=0)
-            pred_motion = pred_motion * temp_std + temp_mean
+            pred_motion = pred_motion * motion_std + motion_mean
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-9, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
@@ -207,5 +238,5 @@ if __name__ == "__main__":
             app_manager = AppManager()
             GT_kf_prob = GT_kf_prob.reshape(B*T, -1)
             pred_kf_prob = pred_kf_prob.reshape(B*T, -1)
-            app = KeyframeApp(GT_motion, pred_motion, ybot.model(), keyframes)
+            app = KeyframeApp(GT_motion, pred_motion, ybot.model(), total_keyframes, T)
             app_manager.run(app)

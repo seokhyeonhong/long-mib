@@ -98,6 +98,11 @@ class ContextTransformer(nn.Module):
         # mask
         batch_mask, atten_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
         masked_x = x * batch_mask
+
+        # linear interpolation of root position
+        t = torch.linspace(0, 1, T-self.config.context_frames+1, device=x.device).unsqueeze(0).unsqueeze(-1) # (1, T, 1)
+        delta = (masked_x[:, -1, -3:] - masked_x[:, self.config.context_frames-1, -3:]).unsqueeze(1) # (B, 1, 3)
+        masked_x[:, self.config.context_frames-1:, -3:] = masked_x[:, self.config.context_frames-1:self.config.context_frames, -3:] + t * delta
         x = self.encoder(torch.cat([masked_x, batch_mask], dim=-1))
 
         # add keyframe positional embedding

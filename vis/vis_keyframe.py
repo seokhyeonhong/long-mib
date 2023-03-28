@@ -21,7 +21,7 @@ from vis.visapp import ContextMotionApp
 from model.ours import KeyframeTransformer
 
 class KeyframeApp(MotionApp):
-    def __init__(self, GT_motion, pred_motion, model, GT_prob, pred_prob):
+    def __init__(self, GT_motion, pred_motion, model, GT_prob, pred_prob, time_per_motion):
         super().__init__(GT_motion, model, YBOT_FBX_DICT)
 
         self.GT_motion = GT_motion
@@ -29,6 +29,8 @@ class KeyframeApp(MotionApp):
 
         self.GT_prob = GT_prob
         self.pred_prob = pred_prob
+
+        self.time_per_motion = time_per_motion
 
         self.GT_model = model
         self.GT_model.set_source_skeleton(self.GT_motion.skeleton, YBOT_FBX_DICT)
@@ -48,6 +50,7 @@ class KeyframeApp(MotionApp):
     def render_text(self):
         super().render_text()
         Render.text_on_screen()
+
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -59,8 +62,8 @@ if __name__ == "__main__":
     dataset    = KeyframeDataset(train=False, config=config)
     skeleton   = dataset.skeleton
 
-    motion_mean, motion_std = dataset.statistics(dim=(0, 1))
-    motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    kf_mean, kf_std = dataset.statistics(dim=(0, 1))
+    kf_mean, kf_std = kf_mean.to(device), kf_std.to(device)
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
@@ -84,9 +87,9 @@ if __name__ == "__main__":
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
             # forward
-            batch = (GT_motion - motion_mean) / motion_std
+            batch = (GT_motion - kf_mean) / kf_std
             pred_motion, _ = model.forward(batch)
-            pred_motion = pred_motion * motion_std[..., :-5] + motion_mean[..., :-5] # exclude traj features
+            pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
@@ -103,5 +106,5 @@ if __name__ == "__main__":
             app_manager = AppManager()
             GT_kf_prob = GT_kf_prob.reshape(B*T, -1)
             pred_kf_prob = pred_kf_prob.reshape(B*T, -1)
-            app = KeyframeApp(GT_motion, pred_motion, ybot.model(), GT_kf_prob, pred_kf_prob)
+            app = KeyframeApp(GT_motion, pred_motion, ybot.model(), GT_kf_prob, pred_kf_prob, T)
             app_manager.run(app)

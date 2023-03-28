@@ -30,27 +30,14 @@ class MotionDataset(Dataset):
 
     def statistics(self, dim=(0, 1)):
         print(f"Calculating MotionDataset mean and std, dim={dim}...")
-        
-        # load and return mean and std if they exist
-        mean_path = os.path.join(self.config.dataset_dir, f"motion_mean_{dim}.pt")
-        std_path  = os.path.join(self.config.dataset_dir, f"motion_std_{dim}.pt")
 
-        if os.path.exists(mean_path) and os.path.exists(std_path):
-            mean = torch.load(mean_path)
-            std  = torch.load(std_path)
-            return mean, std
-        
-        if not self.train:
-            raise ValueError("Mean and std must be calculated and saved on training set first")
+        # calculate statistics from training set
+        trainset = MotionDataset(True, self.config)
 
-        # load motion features and calculate mean and std
-        X = torch.stack([self[i] for i in range(len(self))], dim=0)
+        # mean and std
+        X = torch.stack([trainset[i] for i in range(len(trainset))], dim=0)
         mean = torch.mean(X, dim=dim)
         std = torch.std(X, dim=dim) + 1e-8
-
-        # save mean and std
-        torch.save(mean, mean_path)
-        torch.save(std, std_path)
 
         return mean, std
 
@@ -81,25 +68,12 @@ class KeyframeDataset(Dataset):
     def statistics(self, dim=(0, 1)):
         print(f"Calculating KeyframeDataset mean and std, dim={dim}...")
 
-        # load and return mean and std if they exist
-        mean_path = os.path.join(self.config.dataset_dir, f"keyframe_maxtrans{self.config.max_transition}_mean_{dim}.pt")
-        std_path  = os.path.join(self.config.dataset_dir, f"keyframe_maxtrans{self.config.max_transition}_std_{dim}.pt")
+        # calculate statistics from training set
+        trainset = KeyframeDataset(True, self.config)
 
-        if os.path.exists(mean_path) and os.path.exists(std_path):
-            mean = torch.load(mean_path)
-            std  = torch.load(std_path)
-            return mean, std
-        
-        if not self.train:
-            raise ValueError("Mean and std must be calculated and saved on training set first")
-
-        # load motion features and calculate mean and std
-        X = torch.stack([self[i] for i in range(len(self))], dim=0)
+        # mean and std
+        X = torch.stack([trainset[i] for i in range(len(trainset))], dim=0)
         mean = torch.mean(X, dim=dim)
         std = torch.std(X, dim=dim) + 1e-8
-
-        # save mean and std
-        torch.save(mean, mean_path)
-        torch.save(std, std_path)
 
         return mean, std
