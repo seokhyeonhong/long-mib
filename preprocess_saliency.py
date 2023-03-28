@@ -181,8 +181,23 @@ def generate_dataset(config, train=True):
         for k in range(3, config.num_keyframes+1):
             kfs = keyframes[k]
             prob[kfs] += 1
-        prob = prob / (config.num_keyframes-2)
-        prob = torch.cat([torch.ones(config.context_frames-1), prob])
+        
+        # prob 값대로 순위를 매기기
+        rank_idx = torch.argsort(prob, descending=True)
+        tier = [-1] * len(rank_idx)
+        for i in range(len(rank_idx)):
+            val = i
+            if i > 0 and prob[rank_idx[i]] == prob[rank_idx[i-1]]:
+                val = tier[rank_idx[i-1]]
+            tier[rank_idx[i]] = val
+        
+        tier = torch.tensor(tier)
+        tier = (config.num_keyframes+1 - tier) / (config.num_keyframes+1)
+
+
+        # prob = prob / (config.num_keyframes-2)
+        # breakpoint()
+        prob = torch.cat([torch.ones(config.context_frames-1), tier])
         prob = prob.unsqueeze(-1)
 
         feature = torch.cat([local_R6, root_p, prob, traj], dim=-1).cpu().numpy()

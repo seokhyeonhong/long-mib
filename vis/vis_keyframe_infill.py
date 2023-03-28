@@ -102,22 +102,27 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    ctx = ContextTransformer(dataset.shape[-1] - 6, Config.load("configs/context.json")).to(device) # exclude trajectory and prob
-    testutil.load_model(ctx, Config.load("configs/context.json"))
+    ctx = ContextTransformer(dataset.shape[-1] - 6, Config.load("configs/context_noise.json")).to(device) # exclude trajectory and prob
+    testutil.load_model(ctx, Config.load("configs/context_noise.json"))
     ctx.eval()
 
     det = DetailTransformer(dataset.shape[-1] - 6, Config.load("configs/detail.json")).to(device) # exclude trajectory and prob
     testutil.load_model(det, Config.load("configs/detail.json"))
     det.eval()
 
-    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/context.json")).statistics(dim=(0, 1))
+    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/context_noise.json")).statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
 
     # character
     ybot = FBX("dataset/ybot.fbx")
 
-    toe_jids = [102, 103, 104, 105, 106, 107, 126, 127, 128, 129, 130, 131]
+    # toe_jids = [17, 21]
+    # # toe_jids = [9, 13, 17, 21]
+    # toe_fids = []
+    # for jid in toe_jids:
+    #     for i in range(6):
+    #         toe_fids.append(6*jid + i)
 
     # training loop
     with torch.no_grad():
@@ -135,6 +140,7 @@ if __name__ == "__main__":
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
             pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
             pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
+            # pred_motion[:, :, toe_fids] = GT_motion[:, :, toe_fids] # restore toe features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
             pred_local_R6 = rotation.R_to_R6(rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))).reshape(B, T, -1)
@@ -161,10 +167,10 @@ if __name__ == "__main__":
                     total_keyframes.append(b*T + kf)
 
                 # motion batch from keyframe prediction
-                local_R6 = pred_local_R6[b:b+1].clone()
-                root_p = pred_root_p[b:b+1].clone()
-                # local_R6 = GT_local_R6[b:b+1].clone()
-                # root_p = GT_root_p[b:b+1].clone()
+                # local_R6 = pred_local_R6[b:b+1].clone()
+                # root_p = pred_root_p[b:b+1].clone()
+                local_R6 = GT_local_R6[b:b+1].clone()
+                root_p = GT_root_p[b:b+1].clone()
                 motion_batch = torch.cat([local_R6, root_p], dim=-1)
                 motion_batch = (motion_batch - motion_mean) / motion_std
 
@@ -198,8 +204,8 @@ if __name__ == "__main__":
                     # forward and denormalize
                     pred_motion, mask = ctx.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
                     pred_motion = mask * input_batch + (1 - mask) * pred_motion
-                    pred_motion, _ = det.forward(pred_motion, mask)
-                    pred_motion = mask * input_batch + (1 - mask) * pred_motion
+                    # pred_motion, _ = det.forward(pred_motion, mask)
+                    # pred_motion = mask * input_batch + (1 - mask) * pred_motion
                     pred_motion = pred_motion * motion_std + motion_mean
 
                     # re-update
