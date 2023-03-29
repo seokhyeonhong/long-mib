@@ -22,7 +22,7 @@ from utility import trainutil, testutil
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/detail.json")
+    config = Config.load("configs/detail_noise.json")
     util.seed()
 
     # dataset

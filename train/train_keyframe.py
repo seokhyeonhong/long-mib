@@ -22,7 +22,7 @@ from utility import trainutil
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/keyframe.json")
+    config = Config.load("configs/kftemp.json")
     util.seed()
 
     # dataset
@@ -39,9 +39,9 @@ if __name__ == "__main__":
     # model
     print("Initializing model...")
     model = KeyframeTransformer(dataset.shape[-1], config).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
+    optim = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
-    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
+    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)#, scheduler)
     init_iter = iter
 
     # save and log
@@ -93,7 +93,7 @@ if __name__ == "__main__":
             optim.zero_grad()
             loss.backward()
             optim.step()
-            scheduler.step()
+            # scheduler.step()
 
             # log
             loss_dict["total"]  += loss.item()
@@ -112,10 +112,10 @@ if __name__ == "__main__":
                 }
             
             if iter % config.save_interval == 0:
-                trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+                # trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
             
             iter += 1
     
     print(f"Training finished in {time.perf_counter() - start_time:.2f} seconds")
-    trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+    # trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)

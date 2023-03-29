@@ -19,7 +19,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer
+from model.ours import KeyframeTransformerLocal
 from model.twostage import ContextTransformer, DetailTransformer
 
 class KeyframeApp(MotionApp):
@@ -88,7 +88,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/keyframe.json")
+    config = Config.load("configs/keyframe_local.json")
     util.seed()
 
     # dataset
@@ -104,7 +104,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = KeyframeTransformer(dataset.shape[-1], config).to(device) # exclude trajectory
+    model = KeyframeTransformerLocal(dataset.shape[-1], config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 
@@ -155,7 +155,7 @@ if __name__ == "__main__":
 
             # forward
             batch = (GT_motion - kf_mean) / kf_std
-            pred_motion, _ = model.forward(batch, ratio_constrained=0.0, prob_constrained=0.0)
+            pred_motion, _ = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
             pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
             pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame

@@ -47,7 +47,7 @@ class KeyframeDataset(Dataset):
     Features:
         - motion features (number of joints * 6 + 3) for each frame, 6D orientations and a 3D translation vector
         - keyframe probability (1) for each frame
-        - trajectory features (5) for each frame, a 3D forward vector and a 2D xz position vector
+        - trajectory features (5) for each frame, xz and forward vector
     """
     def __init__(self, train, config):
         self.train  = train
