@@ -33,7 +33,6 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
-    motion_mean, motion_std = motion_mean[:-5], motion_std[:-5] # exclude trajectory
     
     feet_ids = []
     for name in config.contact_joint_names:
@@ -87,11 +86,12 @@ if __name__ == "__main__":
             # keyframes and interpolated motion
             keyframes = model.get_random_keyframes(T)
             interp_motion = model.get_interpolated_motion(GT_local_R, GT_root_p, keyframes)
+            interp_motion = torch.cat([interp_motion, GT_traj], dim=-1)
 
             # forward
             batch = (interp_motion - motion_mean) / motion_std
-            pred_motion, pred_contact = model.forward(batch, keyframes, GT_traj)
-            pred_motion = pred_motion * motion_std + motion_mean # exclude trajectory
+            pred_motion, pred_contact = model.forward(batch, keyframes)
+            pred_motion = pred_motion * motion_std[:-5] + motion_mean[:-5] # exclude trajectory
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-8, 3], dim=-1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)

@@ -22,7 +22,7 @@ from utility import trainutil
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/kftemp.json")
+    config = Config.load("configs/keyframe.json")
     util.seed()
 
     # dataset
@@ -47,14 +47,16 @@ if __name__ == "__main__":
     # save and log
     if not os.path.exists(config.save_dir):
         os.makedirs(config.save_dir)
-    config.write(os.path.join(config.save_dir, "config.json"))
+    # config.write(os.path.join(config.save_dir, "config.json"))
     writer = SummaryWriter(config.log_dir)
 
     # training loop
     loss_dict = {
         "total":  0,
         "frame":  0,
-        "pose":   0,
+        "rot":    0,
+        "pos":    0,
+        "traj":   0,
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
@@ -73,49 +75,60 @@ if __name__ == "__main__":
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
-            pred_kf_prob = torch.sigmoid(pred_kf_prob)
+            # pred_kf_prob = torch.sigmoid(pred_kf_prob)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
+
+            pred_traj_xz = pred_root_p[..., (0, 2)]
+            pred_root_R = rotation.R6_to_R(pred_local_R6[:, :, 0])
+            pred_traj_forward = F.normalize(torch.matmul(pred_root_R, v_forward) * torchconst.XZ(device), dim=-1)
+            pred_traj = torch.cat([pred_traj_xz, pred_traj_forward], dim=-1)
 
             # weight by keyframe probability
             GT_local_R6   = GT_local_R6.reshape(B, T, -1) * GT_kf_prob
             GT_global_p   = GT_global_p.reshape(B, T, -1) * GT_kf_prob
+            GT_traj       = GT_traj.reshape(B, T, -1) * GT_kf_prob
+
             pred_local_R6 = pred_local_R6.reshape(B, T, -1) * GT_kf_prob
             pred_global_p = pred_global_p.reshape(B, T, -1) * GT_kf_prob
+            pred_traj     = pred_traj.reshape(B, T, -1) * GT_kf_prob
 
             # loss
-            loss_keytime = config.weight_keytime * F.l1_loss(pred_kf_prob[:, config.context_frames:-1], GT_kf_prob[:, config.context_frames:-1])
-            loss_rot     = config.weight_keypose * F.l1_loss(pred_local_R6[:, config.context_frames:-1], GT_local_R6[:, config.context_frames:-1])
-            loss_pos     = config.weight_keypose * F.l1_loss(pred_global_p[:, config.context_frames:-1], GT_global_p[:, config.context_frames:-1])
-            loss = loss_keytime + loss_rot + loss_pos
+            loss_frame = config.weight_frame * F.l1_loss(pred_kf_prob, GT_kf_prob)
+            loss_rot   = config.weight_rot   * F.l1_loss(pred_local_R6, GT_local_R6)
+            loss_pos   = config.weight_pos   * F.l1_loss(pred_global_p, GT_global_p)
+            loss_traj  = config.weight_traj  * F.l1_loss(pred_traj, GT_traj)
+            loss = loss_frame + loss_rot + loss_pos + loss_traj
 
             # backward
             optim.zero_grad()
             loss.backward()
             optim.step()
-            # scheduler.step()
+            scheduler.step()
 
             # log
             loss_dict["total"]  += loss.item()
-            loss_dict["frame"]  += loss_keytime.item()
-            loss_dict["pose"]   += loss_rot.item() + loss_pos.item()
+            loss_dict["frame"]  += loss_frame.item()
+            loss_dict["rot"]    += loss_rot.item()
+            loss_dict["pos"]    += loss_pos.item()
+            loss_dict["traj"]   += loss_traj.item()
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Pose: {loss_dict['pose'] / config.log_interval:.4f} | Elapsed: {(time.perf_counter() - start_time) / 60:.2f} min")
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Elapsed: {(time.perf_counter() - start_time) / 60:.2f} min")
                 writer.add_scalar("loss/total",  loss_dict["total"]  / config.log_interval, iter)
                 writer.add_scalar("loss/frame",  loss_dict["frame"]  / config.log_interval, iter)
-                writer.add_scalar("loss/pose",   loss_dict["pose"]   / config.log_interval, iter)
-                loss_dict = {
-                    "total":  0,
-                    "frame": 0,
-                    "pose": 0,
-                }
+                writer.add_scalar("loss/rot",    loss_dict["rot"]    / config.log_interval, iter)
+                writer.add_scalar("loss/pos",    loss_dict["pos"]    / config.log_interval, iter)
+                writer.add_scalar("loss/traj",   loss_dict["traj"]   / config.log_interval, iter)
+                
+                for k in loss_dict.keys():
+                    loss_dict[k] = 0
             
             if iter % config.save_interval == 0:
-                # trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+                trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
             
             iter += 1
     
     print(f"Training finished in {time.perf_counter() - start_time:.2f} seconds")
-    # trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+    trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)

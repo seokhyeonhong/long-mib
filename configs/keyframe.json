@@ -25,13 +25,15 @@
     "min_transition": 5,
     "max_transition": 90,
 
-    "dropout": 0.0,
+    "dropout": 0.1,
     "n_layers": 6,
     "n_heads": 8,
     "d_model": 512,
     "d_ff": 2048,
     "pre_layernorm": false,
 
-    "weight_keytime": 1.0,
-    "weight_keypose": 1.0
+    "weight_frame": 1.0,
+    "weight_rot": 1.0,
+    "weight_pos": 1.0,
+    "weight_traj": 1.0
 }
