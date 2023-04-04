@@ -19,8 +19,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformerLocal
-from model.twostage import ContextTransformer, DetailTransformer
+from model.ours import KeyframeTransformerLocal, InterpolationTransformer
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, keyframes, time_per_motion, traj):
@@ -53,7 +52,7 @@ class KeyframeApp(MotionApp):
 
         if self.show_GT:
             self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
-            Render.model(self.GT_model).draw()
+            Render.model(self.GT_model).set_all_alphas(1.0).draw()
 
         # predicted pose
         if self.show_pred:
@@ -108,15 +107,11 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    ctx = ContextTransformer(dataset.shape[-1] - 6, Config.load("configs/context_noise.json")).to(device) # exclude trajectory and prob
-    testutil.load_model(ctx, Config.load("configs/context_noise.json"))
-    ctx.eval()
+    interp = InterpolationTransformer(dataset.shape[-1] - 1, Config.load("configs/interp_complete.json")).to(device) # exclude prob
+    testutil.load_model(interp, Config.load("configs/interp_complete.json"))
+    interp.eval()
 
-    det = DetailTransformer(dataset.shape[-1] - 6, Config.load("configs/detail_noise.json")).to(device) # exclude trajectory and prob
-    testutil.load_model(det, Config.load("configs/detail_noise.json"))
-    det.eval()
-
-    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/context_noise.json")).statistics(dim=(0, 1))
+    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/interp_complete.json")).statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
     motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
 
@@ -138,29 +133,23 @@ if __name__ == "__main__":
             # GT motion
             GT_motion = GT_motion.to(device)
 
-            # lerp for trajectory
-            # t = torch.linspace(0, 1, T-config.context_frames+1, device=device).unsqueeze(0).unsqueeze(-1)
-            # delta = (GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3])[:, None]
-            # # GT_motion[:, config.context_frames-1:, -5:-3] = 0
-            # GT_motion[:, config.context_frames-1:, -5:-3] = delta * t + GT_motion[:, config.context_frames-1:config.context_frames, -5:-3]
-
-            # direction = F.normalize(GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3], dim=-1)
-            # direction = torch.stack([direction[..., 0], torch.zeros_like(direction[..., 0]), direction[..., 1]], dim=-1)
-            # GT_motion[:, config.context_frames-1:, -3:] = direction.unsqueeze(1)
-
-            # # GT_motion[:, config.context_frames-1:, -5:] = -GT_motion[:, config.context_frames-1:, -5:]
-            # # GT_motion[:, -1, (D-9, D-7)] = -GT_motion[:, -1, (D-9, D-7)]
-            # # GT_motion[:, -1, (D-9, D-7)] = 0
-
             GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_motion, [D-9, 3, 1, 5], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
+            
+            # modified traj
+            # interp_m = interp.get_interpolated_motion(GT_local_R, GT_root_p, [config.context_frames-1, T-1])
+            # interp_root_R = rotation.R6_to_R(interp_m[..., :6])
+            # interp_root_p = interp_m[..., -3:]
+
+            # GT_traj[:, config.context_frames-1:, :2] = interp_root_p[:, config.context_frames-1:, (0, 2)]
+            # GT_traj[:, config.context_frames-1:, 2:] = F.normalize(torch.matmul(interp_root_R[:, config.context_frames-1:], v_forward) * torchconst.XZ(device), dim=-1)
 
             # forward
             batch = (GT_motion - kf_mean) / kf_std
             pred_motion, _ = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
-            pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
-            pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
+            # pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
+            # pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
             # pred_motion[:, :, toe_fids] = GT_motion[:, :, toe_fids] # restore toe features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
@@ -188,61 +177,23 @@ if __name__ == "__main__":
                     total_keyframes.append(b*T + kf)
 
                 # motion batch from keyframe prediction
+                # local_R6 = GT_local_R6[b:b+1].clone()
+                # root_p = GT_root_p[b:b+1].clone()
                 local_R6 = pred_local_R6[b:b+1].clone()
                 root_p = pred_root_p[b:b+1].clone()
+                local_R = rotation.R6_to_R(local_R6.reshape(local_R6.shape[0], local_R6.shape[1], -1, 6))
                 motion_batch = torch.cat([local_R6, root_p], dim=-1)
-                motion_batch = (motion_batch - motion_mean) / motion_std
 
-                # recurrent prediction
-                frame_start, frame_end = 0, keyframes[0]
-                for f in range(len(keyframes)+1):
-                    # input batch
-                    input_batch = motion_batch[:, frame_start:frame_end+1]
-                    input_batch = input_batch * motion_std + motion_mean
-                    local_R6, root_p = torch.split(input_batch, [D-9, 3], dim=-1)
+                # interpolate
+                # motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
 
-                    # delta rotation to fit at the last context frame
-                    local_R = rotation.R6_to_R(local_R6.reshape(local_R6.shape[0], local_R6.shape[1], -1, 6))
-                    root_R = local_R[:, :, 0]
-                    forward = torch.matmul(root_R[:, config.context_frames-1], v_forward)
-                    forward = F.normalize(forward * torchconst.XZ(device), dim=-1)
-                    up = torchconst.UP(device).unsqueeze(0)
-                    delta_R = torch.stack([torch.cross(up, forward), up, forward], dim=-2).unsqueeze(1)
-                    root_R = torch.matmul(delta_R, root_R)
-                    root_R6 = rotation.R_to_R6(root_R)
-
-                    # delta position to fit at the last context frame
-                    delta_p = root_p[:, config.context_frames-1:config.context_frames] * torchconst.XZ(device)
-                    root_p = torch.matmul(delta_R, (root_p - delta_p).unsqueeze(-1)).squeeze(-1)
-
-                    # update
-                    input_batch[:, :, :6] = root_R6
-                    input_batch[:, :, -3:] = root_p
-                    input_batch = (input_batch - motion_mean) / motion_std
-
-                    # forward and denormalize
-                    pred_motion, mask = ctx.forward(input_batch, ratio_constrained=0.0, prob_constrained=0.0)
-                    pred_motion = mask * input_batch + (1 - mask) * pred_motion
-                    pred_motion, _ = det.forward(pred_motion, mask)
-                    pred_motion = mask * input_batch + (1 - mask) * pred_motion
-                    pred_motion = pred_motion * motion_std + motion_mean
-
-                    # re-update
-                    local_R = rotation.R6_to_R(local_R6.reshape(local_R6.shape[0], local_R6.shape[1], -1, 6))
-                    root_R = local_R[:, :, 0]
-                    root_R = torch.matmul(delta_R.transpose(-1, -2), root_R)
-                    root_R6 = rotation.R_to_R6(root_R)
-                    root_p = torch.matmul(delta_R.transpose(-1, -2), root_p.unsqueeze(-1)).squeeze(-1) + delta_p
-                    pred_motion[:, :, :6] = root_R6
-                    pred_motion[:, :, -3:] = root_p
-
-                    # re-normalize
-                    pred_motion = (pred_motion - motion_mean) / motion_std
-                    motion_batch[:, frame_start:frame_end+1] = pred_motion
-
-                    frame_start = frame_end - config.context_frames + 1
-                    frame_end = keyframes[f+1] if f < len(keyframes)-1 else T
+                # # refine
+                # motion_batch = (motion_batch - motion_mean) / motion_std
+                # pred, _ = interp.forward(motion_batch, keyframes, GT_traj[b:b+1])
+                # pred[:, :config.context_frames] = motion_batch[:, :config.context_frames]
+                # pred[:, -1] = motion_batch[:, -1]
                 
+                # results.append(pred.clone())
                 results.append(motion_batch.clone())
             
             # concatenate

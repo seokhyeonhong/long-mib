@@ -139,14 +139,14 @@ if __name__ == "__main__":
             GT_motion = GT_motion.to(device)
 
             # lerp for trajectory
-            # t = torch.linspace(0, 1, T-config.context_frames+1, device=device).unsqueeze(0).unsqueeze(-1)
-            # delta = (GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3])[:, None]
-            # GT_motion[:, config.context_frames-1:, -5:-3] = delta * t + GT_motion[:, config.context_frames-1:config.context_frames, -5:-3]
-
-            # direction = F.normalize(GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3], dim=-1)
-            # direction = torch.stack([direction[..., 0], torch.zeros_like(direction[..., 0]), direction[..., 1]], dim=-1)
-            # GT_motion[:, config.context_frames-1:, -3:] = direction.unsqueeze(1)
-
+            t = torch.linspace(0, 1, T-config.context_frames+1, device=device).unsqueeze(0).unsqueeze(-1)
+            delta = (GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3])[:, None]
+            GT_motion[:, config.context_frames-1:, -5:-3] = delta * t + GT_motion[:, config.context_frames-1:config.context_frames, -5:-3]
+# 
+            direction = F.normalize(GT_motion[:, -1, -5:-3] - GT_motion[:, config.context_frames-1, -5:-3], dim=-1)
+            direction = torch.stack([direction[..., 0], torch.zeros_like(direction[..., 0]), direction[..., 1]], dim=-1)
+            GT_motion[:, config.context_frames-1:, -3:] = direction.unsqueeze(1)
+# 
             # GT_motion[:, config.context_frames-1:, -5:] = -GT_motion[:, config.context_frames-1:, -5:]
             # GT_motion[:, -1, (D-9, D-7)] = -GT_motion[:, -1, (D-9, D-7)]
 
@@ -186,10 +186,10 @@ if __name__ == "__main__":
                     total_keyframes.append(b*T + kf)
 
                 # motion batch from keyframe prediction
-                # local_R6 = pred_local_R6[b:b+1].clone()
-                # root_p = pred_root_p[b:b+1].clone()
-                local_R6 = GT_local_R6[b:b+1].clone()
-                root_p = GT_root_p[b:b+1].clone()
+                local_R6 = pred_local_R6[b:b+1].clone()
+                root_p = pred_root_p[b:b+1].clone()
+                # local_R6 = GT_local_R6[b:b+1].clone()
+                # root_p = GT_root_p[b:b+1].clone()
                 motion_batch = torch.cat([local_R6, root_p], dim=-1)
                 motion_batch = (motion_batch - motion_mean) / motion_std
 

@@ -18,7 +18,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer
+from model.ours import KeyframeTransformerLocal
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, GT_prob, pred_prob, time_per_motion):
@@ -42,10 +42,11 @@ class KeyframeApp(MotionApp):
         super().render(render_model=False)
 
         self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
-        Render.model(self.GT_model).set_all_alphas(self.GT_prob[self.frame]).draw()
+        Render.model(self.GT_model).draw()
+        # Render.model(self.GT_model).set_all_alphas(self.GT_prob[self.frame]).draw()
 
         self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
-        Render.model(self.pred_model).set_all_alphas(self.pred_prob[self.frame]).draw()
+        Render.model(self.pred_model).draw()
 
     def render_text(self):
         super().render_text()
@@ -54,7 +55,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/keyframe.json")
+    config = Config.load("configs/keyframe_local.json")
     util.seed()
 
     # dataset
@@ -69,7 +70,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = KeyframeTransformer(dataset.shape[-1], config).to(device) # exclude trajectory
+    model = KeyframeTransformerLocal(dataset.shape[-1], config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 

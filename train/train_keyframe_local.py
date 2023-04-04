@@ -55,6 +55,7 @@ if __name__ == "__main__":
         "total":  0,
         "frame":  0,
         "pose":   0,
+        "traj":   0,
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
@@ -77,17 +78,26 @@ if __name__ == "__main__":
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
 
-            # weight by keyframe probability
-            GT_local_R6   = GT_local_R6.reshape(B, T, -1) * GT_kf_prob
-            GT_global_p   = GT_global_p.reshape(B, T, -1) * GT_kf_prob
-            pred_local_R6 = pred_local_R6.reshape(B, T, -1) * GT_kf_prob
-            pred_global_p = pred_global_p.reshape(B, T, -1) * GT_kf_prob
+            pred_traj_xz = pred_root_p[..., (0, 2)]
+            pred_root_R = rotation.R6_to_R(pred_local_R6[:, :, 0])
+            pred_traj_forward = F.normalize(torch.matmul(pred_root_R, v_forward) * torchconst.XZ(device), dim=-1)
+            pred_traj = torch.cat([pred_traj_xz, pred_traj_forward], dim=-1)
 
+            # weighted by keyframe probability
+            GT_local_R6   = GT_local_R6.reshape(B, T, -1)
+            GT_global_p   = GT_global_p.reshape(B, T, -1)
+            GT_traj       = GT_traj.reshape(B, T, -1)
+
+            pred_local_R6 = pred_local_R6.reshape(B, T, -1)
+            pred_global_p = pred_global_p.reshape(B, T, -1)
+            pred_traj     = pred_traj.reshape(B, T, -1)
+            
             # loss
-            loss_keytime = config.weight_keytime * F.l1_loss(pred_kf_prob[:, config.context_frames:-1], GT_kf_prob[:, config.context_frames:-1])
-            loss_rot     = config.weight_keypose * F.l1_loss(pred_local_R6[:, config.context_frames:-1], GT_local_R6[:, config.context_frames:-1])
-            loss_pos     = config.weight_keypose * F.l1_loss(pred_global_p[:, config.context_frames:-1], GT_global_p[:, config.context_frames:-1])
-            loss = loss_keytime + loss_rot + loss_pos
+            loss_keytime = config.weight_keytime * torch.mean(torch.abs(pred_kf_prob[:, config.context_frames:-1] - GT_kf_prob[:, config.context_frames:-1]))
+            loss_rot     = config.weight_keypose * torch.mean(torch.abs(pred_local_R6[:, config.context_frames:-1] - GT_local_R6[:, config.context_frames:-1]) * GT_kf_prob[:, config.context_frames:-1])
+            loss_pos     = config.weight_keypose * torch.mean(torch.abs(pred_global_p[:, config.context_frames:-1] - GT_global_p[:, config.context_frames:-1]) * GT_kf_prob[:, config.context_frames:-1])
+            loss_traj    = config.weight_traj    * torch.mean(torch.abs(pred_traj[:, config.context_frames:-1] - GT_traj[:, config.context_frames:-1]) * GT_kf_prob[:, config.context_frames:-1])
+            loss = loss_keytime + loss_rot + loss_pos + loss_traj
 
             # backward
             optim.zero_grad()
@@ -99,16 +109,19 @@ if __name__ == "__main__":
             loss_dict["total"]  += loss.item()
             loss_dict["frame"]  += loss_keytime.item()
             loss_dict["pose"]   += loss_rot.item() + loss_pos.item()
+            loss_dict["traj"]   += loss_traj.item()
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Pose: {loss_dict['pose'] / config.log_interval:.4f} | Elapsed: {(time.perf_counter() - start_time) / 60:.2f} min")
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Pose: {loss_dict['pose'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Time: {time.perf_counter() - start_time:.2f} sec")
                 writer.add_scalar("loss/total",  loss_dict["total"]  / config.log_interval, iter)
                 writer.add_scalar("loss/frame",  loss_dict["frame"]  / config.log_interval, iter)
                 writer.add_scalar("loss/pose",   loss_dict["pose"]   / config.log_interval, iter)
+                writer.add_scalar("loss/traj",   loss_dict["traj"]   / config.log_interval, iter)
                 loss_dict = {
                     "total":  0,
                     "frame": 0,
                     "pose": 0,
+                    "traj": 0,
                 }
             
             if iter % config.save_interval == 0:
