@@ -32,13 +32,13 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
-    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
+    motion_mean, motion_std = motion_mean[..., :-3], motion_std[..., :-3] # exclude trajectory
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
     print("Initializing model...")
-    model = ContextTransformer(dataset.shape[-1] - 5, config).to(device) # exclude trajectory
+    model = ContextTransformer(dataset.shape[-1] - 3, config).to(device) # exclude trajectory
     optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             transition_frames = random.randint(config.min_transition, config.max_transition)
             T = config.context_frames + transition_frames + 1
-            GT_motion = GT_motion[:, :T, :-5] # exclude trajectory
+            GT_motion = GT_motion[:, :T, :-3] # exclude trajectory
             B, T, D = GT_motion.shape
 
             # GT
@@ -74,17 +74,16 @@ if __name__ == "__main__":
 
             # forward
             batch = (GT_motion - motion_mean) / motion_std
-            pred_motion, mask = model.forward(batch)
+            pred_motion = model.forward(batch)
             pred_motion = pred_motion * motion_std + motion_mean
-            pred_motion = GT_motion * mask + pred_motion * (1 - mask)
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-3, 3], dim=-1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
             
             # loss
-            loss_rot = config.weight_rot * F.l1_loss(pred_local_R6[:, config.context_frames:-1], GT_local_R6[:, config.context_frames:-1])
-            loss_pos = config.weight_pos * F.l1_loss(pred_global_p[:, config.context_frames:-1], GT_global_p[:, config.context_frames:-1])
+            loss_rot    = config.weight_rot * F.l1_loss(pred_local_R6[:, config.context_frames:-1], GT_local_R6[:, config.context_frames:-1])
+            loss_pos    = config.weight_pos * F.l1_loss(pred_global_p[:, config.context_frames:-1], GT_global_p[:, config.context_frames:-1])
             loss_smooth = config.weight_vel * F.l1_loss(pred_motion[:, config.context_frames:] - pred_motion[:, config.context_frames-1:-1], torch.zeros_like(pred_motion[:, config.context_frames:]))
             loss = loss_rot + loss_pos + loss_smooth
 

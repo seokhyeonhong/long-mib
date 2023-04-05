@@ -94,6 +94,8 @@ class ContextTransformer(nn.Module):
     
     def forward(self, x, ratio_constrained=0.1, prob_constrained=0.3):
         B, T, D = x.shape
+
+        original_x = x.clone()
         
         # mask
         batch_mask, atten_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
@@ -124,7 +126,9 @@ class ContextTransformer(nn.Module):
         
         x = self.decoder(x)
 
-        return x, batch_mask
+        x = batch_mask * original_x + (1 - batch_mask) * x
+
+        return x
 
 class DetailTransformer(nn.Module):
     def __init__(self, d_motion, config):

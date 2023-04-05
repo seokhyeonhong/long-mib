@@ -73,12 +73,12 @@ if __name__ == "__main__":
             # forward
             batch = (GT_keyframe - kf_mean) / kf_std
             pred_motion, _ = model.forward(batch)
-            pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
+            pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
 
-            # predicted motion features
-            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
-            pred_kf_score = torch.clip(pred_kf_prob, 0, 1)
+            # predicted keyframe features
+            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
+            pred_kf_score = torch.clip(pred_kf_prob, 0, 1)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
 
             # predicted trajectory
