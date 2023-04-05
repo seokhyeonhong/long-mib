@@ -97,7 +97,7 @@ def get_keyframes(config, train=True):
         GT_feature = GT_feature.to(device)
         
         # split motion features to start from context frame
-        feature = GT_feature[:, config.context_frames-1:, :-5] # except root trajectory
+        feature = GT_feature[:, config.context_frames-1:, :-3] # except root trajectory
         B, T, D = feature.shape
         local_R6, root_p = torch.split(feature, [D-3, 3], dim=-1)
         local_R6 = local_R6.reshape(B, T, -1, 6)
@@ -174,11 +174,11 @@ def generate_dataset(config, train=True):
     for idx, motion in tqdm(enumerate(dataset)):
         motion = motion[:config.context_frames+config.max_transition+1]
         T, D = motion.shape
-        local_R6, root_p, traj = torch.split(motion, [D-8, 3, 5], dim=-1)
+        local_R6, root_p, traj = torch.split(motion, [D-6, 3, 3], dim=-1)
 
         keyframes = keyframe_data[idx]
         prob = torch.zeros(T - config.context_frames + 1)
-        for k in range(3, config.num_keyframes+1):
+        for k in range(3, config.max_transition+1):
             kfs = keyframes[k]
             prob[kfs] += 1
         
@@ -192,10 +192,10 @@ def generate_dataset(config, train=True):
             tier[rank_idx[i]] = val
         
         tier = torch.tensor(tier)
-        tier = (config.num_keyframes+1 - tier) / (config.num_keyframes+1)
+        tier = (config.max_transition+1 - tier) / (config.max_transition+1)
 
 
-        # prob = prob / (config.num_keyframes-2)
+        # prob = prob / (config.max_transition-2)
         # breakpoint()
         prob = torch.cat([torch.ones(config.context_frames-1), tier])
         prob = prob.unsqueeze(-1)

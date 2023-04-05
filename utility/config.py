@@ -38,8 +38,8 @@ class Config(dict):
         # keyframe dataset
         config.keyframe_train_dir    = os.path.join(config.train_dir, f"keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}")
         config.keyframe_test_dir     = os.path.join(config.test_dir,  f"keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}")
-        config.keyframe_trainset_npy = f"{config.train_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}_kf{config.num_keyframes}.npy"
-        config.keyframe_testset_npy  = f"{config.test_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}_kf{config.num_keyframes}.npy"
+        config.keyframe_trainset_npy = f"{config.train_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}.npy"
+        config.keyframe_testset_npy  = f"{config.test_dir}/keyframe_length{config.window_length}_offset{config.window_offset}_fps{config.fps}_maxtrans{config.max_transition}.npy"
 
         # directories to save and log training
         postfix = f"transition{config.min_transition}-{config.max_transition}"

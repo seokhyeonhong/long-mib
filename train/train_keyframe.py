@@ -51,11 +51,13 @@ if __name__ == "__main__":
 
     # training loop
     loss_dict = {
-        "total":  0,
-        "frame":  0,
-        "rot":    0,
-        "pos":    0,
-        "traj":   0,
+        "total":   0,
+        "frame":   0,
+        "rot":     0,
+        "pos":     0,
+        "traj":    0,
+        "foot":    0,
+        "contact": 0,
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
@@ -64,7 +66,7 @@ if __name__ == "__main__":
 
             # GT
             GT_keyframe = GT_keyframe.to(device)
-            GT_local_R6, GT_root_p, GT_kf_score, GT_traj = torch.split(GT_keyframe, [D-9, 3, 1, 5], dim=-1)
+            GT_local_R6, GT_root_p, GT_kf_score, GT_traj = torch.split(GT_keyframe, [D-7, 3, 1, 3], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
