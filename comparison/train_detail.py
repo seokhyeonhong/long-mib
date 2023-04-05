@@ -32,7 +32,7 @@ if __name__ == "__main__":
 
     motion_mean, motion_std = dataset.statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
-    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
+    motion_mean, motion_std = motion_mean[..., :-3], motion_std[..., :-3] # exclude trajectory
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
@@ -42,15 +42,15 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    ctx_model = ContextTransformer(dataset.shape[-1] - 5, Config.load("configs/context.json")).to(device) # exclude trajectory
-    testutil.load_model(ctx_model, Config.load("configs/context.json"))
+    ctx_config = Config.load("configs/context.json")
+    ctx_model = ContextTransformer(dataset.shape[-1] - 3, ctx_config).to(device) # exclude trajectory
+    testutil.load_model(ctx_model, ctx_config)
     ctx_model.eval()
 
-    det_model = DetailTransformer(dataset.shape[-1] - 5, config).to(device) # exclude trajectory
+    det_model = DetailTransformer(dataset.shape[-1] - 3, config).to(device) # exclude trajectory
     optim = torch.optim.Adam(det_model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(det_model, optim, config, scheduler)
-    init_iter = iter
 
     # save and log
     if not os.path.exists(config.save_dir):
@@ -71,7 +71,7 @@ if __name__ == "__main__":
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
             transition_frames = random.randint(config.min_transition, config.max_transition)
             T = config.context_frames + transition_frames + 1
-            GT_motion = GT_motion[:, :T, :-5] # exclude trajectory
+            GT_motion = GT_motion[:, :T, :-3] # exclude trajectory
             B, T, D = GT_motion.shape
 
             # GT
@@ -89,7 +89,6 @@ if __name__ == "__main__":
             with torch.no_grad():
                 batch = (GT_motion - motion_mean) / motion_std
                 ctx_motion, mask = ctx_model.forward(batch)
-                ctx_motion = mask * batch + (1 - mask) * ctx_motion # restore GT
 
             # forward - DetailTransformer
             pred_motion, pred_contact = det_model.forward(ctx_motion, mask)

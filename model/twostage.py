@@ -128,7 +128,7 @@ class ContextTransformer(nn.Module):
 
         x = batch_mask * original_x + (1 - batch_mask) * x
 
-        return x
+        return x, batch_mask
 
 class DetailTransformer(nn.Module):
     def __init__(self, d_motion, config):
@@ -182,6 +182,8 @@ class DetailTransformer(nn.Module):
     
     def forward(self, x, batch_mask):
         B, T, D = x.shape
+
+        original_x = x.clone()
         
         # mask
         x = self.encoder(torch.cat([x, batch_mask], dim=-1))
@@ -201,6 +203,8 @@ class DetailTransformer(nn.Module):
         
         x = self.decoder(x)
         motion, contact = torch.split(x, [self.d_motion, 4], dim=-1)
+
+        motion = batch_mask * original_x + (1 - batch_mask) * motion
         contact = torch.sigmoid(contact)
 
         return motion, contact

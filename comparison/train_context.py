@@ -73,7 +73,7 @@ if __name__ == "__main__":
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
             # forward
-            batch = (GT_motion - motion_mean) / motion_std
+            batch, _ = (GT_motion - motion_mean) / motion_std
             pred_motion = model.forward(batch)
             pred_motion = pred_motion * motion_std + motion_mean
 
