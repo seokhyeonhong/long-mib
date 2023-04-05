@@ -12,26 +12,28 @@
     "contact_joint_names": ["LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"],
     "contact_vel_threshold": 2e-4,
 
-    "log_dir": "log/KeyframeTransformerLocal",
+    "log_dir": "log/InterpolationTransformerGlobal",
     "log_interval": 100,
 
-    "save_dir": "save/KeyframeTransformerLocal",
+    "save_dir": "save/InterpolationTransformerGlobal",
     "save_interval": 10000,
 
     "batch_size": 64,
-    "epochs": 2000,
+    "epochs": 1000,
     "warmup_iters": 8000,
     "min_transition": 5,
     "max_transition": 90,
 
-    "dropout": 0.1,
+    "dropout": 0.0,
     "n_layers": 6,
     "n_heads": 8,
     "d_model": 512,
     "d_ff": 2048,
     "pre_layernorm": true,
 
-    "weight_keytime": 1.0,
-    "weight_keypose": 1.0,
-    "weight_traj": 0.5
+    "weight_rot": 1.0,
+    "weight_pos": 1.0,
+    "weight_vel": 0.5,
+    "weight_traj": 0.5,
+    "weight_contact": 0.2
 }

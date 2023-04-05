@@ -12,7 +12,7 @@ import time
 from tqdm import tqdm
 
 from pymovis.utils import util, torchconst
-from pymovis.ops import motionops, rotation
+from pymovis.ops import motionops, rotation, mathops
 
 from utility.dataset import KeyframeDataset
 from utility.config import Config
@@ -34,6 +34,10 @@ if __name__ == "__main__":
     kf_mean, kf_std = dataset.statistics(dim=(0, 1))
     kf_mean, kf_std = kf_mean.to(device), kf_std.to(device)
     
+    feet_ids = []
+    for name in config.contact_joint_names:
+        feet_ids.append(skeleton.idx_by_name[name])
+
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
@@ -56,7 +60,6 @@ if __name__ == "__main__":
         "rot":     0,
         "pos":     0,
         "traj":    0,
-        "foot":    0,
         "contact": 0,
     }
     start_time = time.perf_counter()
@@ -70,9 +73,14 @@ if __name__ == "__main__":
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
+            GT_feet_v = GT_global_p[:, 1:, feet_ids] - GT_global_p[:, :-1, feet_ids]
+            GT_feet_v = torch.sum(GT_feet_v**2, dim=-1) # squared norm
+            GT_feet_v = torch.cat([GT_feet_v[:, 0:1], GT_feet_v], dim=1)
+            GT_contact = (GT_feet_v < config.contact_vel_threshold).float()
+
             # forward
             batch = (GT_keyframe - kf_mean) / kf_std
-            pred_motion, _ = model.forward(batch)
+            pred_motion = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
 
             # predicted keyframe features
@@ -81,11 +89,17 @@ if __name__ == "__main__":
             pred_kf_score = torch.clip(pred_kf_prob, 0, 1)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
 
+            pred_feet_v = pred_global_p[:, 1:, feet_ids] - pred_global_p[:, :-1, feet_ids]
+            pred_feet_v = torch.sum(pred_feet_v**2, dim=-1) # squared norm
+            pred_feet_v = torch.cat([pred_feet_v[:, 0:1], pred_feet_v], dim=1)
+
             # predicted trajectory
             pred_traj_xz = pred_root_p[..., (0, 2)]
             pred_root_R = rotation.R6_to_R(pred_local_R6[:, :, 0])
             pred_traj_forward = F.normalize(torch.matmul(pred_root_R, v_forward) * torchconst.XZ(device), dim=-1)
-            pred_traj = torch.cat([pred_traj_xz, pred_traj_forward], dim=-1)
+            global_forward = torchconst.FORWARD(device).expand(B, T, -1)
+            pred_signed_angle = mathops.signed_angle(global_forward, pred_traj_forward)
+            pred_traj = torch.cat([pred_traj_xz, pred_signed_angle.unsqueeze(-1)], dim=-1)
 
             # weight by keyframe probability
             GT_local_R6   = GT_local_R6.reshape(B, T, -1)
@@ -97,11 +111,12 @@ if __name__ == "__main__":
             pred_traj     = pred_traj.reshape(B, T, -1)
 
             # loss
-            loss_frame = config.weight_frame * F.l1_loss(pred_kf_score, GT_kf_score)
-            loss_rot   = config.weight_rot   * F.l1_loss(pred_local_R6, GT_local_R6)
-            loss_pos   = config.weight_pos   * F.l1_loss(pred_global_p, GT_global_p)
-            loss_traj  = config.weight_traj  * F.l1_loss(pred_traj, GT_traj)
-            loss = loss_frame + loss_rot + loss_pos + loss_traj
+            loss_frame   = config.weight_frame * torch.mean(torch.abs(pred_kf_score - GT_kf_score))
+            loss_rot     = config.weight_rot   * torch.mean(torch.abs(pred_local_R6 - GT_local_R6) * GT_kf_score)
+            loss_pos     = config.weight_pos   * torch.mean(torch.abs(pred_global_p - GT_global_p) * GT_kf_score)
+            loss_traj    = config.weight_traj  * torch.mean(torch.abs(pred_traj - GT_traj) * GT_kf_score)
+            loss_contact = config.weight_contact * torch.mean(pred_feet_v * GT_contact)
+            loss = loss_frame + loss_rot + loss_pos + loss_traj + loss_contact
 
             # backward
             optim.zero_grad()
@@ -109,19 +124,21 @@ if __name__ == "__main__":
             optim.step()
 
             # log
-            loss_dict["total"]  += loss.item()
-            loss_dict["frame"]  += loss_frame.item()
-            loss_dict["rot"]    += loss_rot.item()
-            loss_dict["pos"]    += loss_pos.item()
-            loss_dict["traj"]   += loss_traj.item()
+            loss_dict["total"]   += loss.item()
+            loss_dict["frame"]   += loss_frame.item()
+            loss_dict["rot"]     += loss_rot.item()
+            loss_dict["pos"]     += loss_pos.item()
+            loss_dict["traj"]    += loss_traj.item()
+            loss_dict["contact"] += loss_contact.item()
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Elapsed: {(time.perf_counter() - start_time) / 60:.2f} min")
-                writer.add_scalar("loss/total",  loss_dict["total"]  / config.log_interval, iter)
-                writer.add_scalar("loss/frame",  loss_dict["frame"]  / config.log_interval, iter)
-                writer.add_scalar("loss/rot",    loss_dict["rot"]    / config.log_interval, iter)
-                writer.add_scalar("loss/pos",    loss_dict["pos"]    / config.log_interval, iter)
-                writer.add_scalar("loss/traj",   loss_dict["traj"]   / config.log_interval, iter)
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Frame: {loss_dict['frame'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
+                writer.add_scalar("loss/total",   loss_dict["total"]  / config.log_interval, iter)
+                writer.add_scalar("loss/frame",   loss_dict["frame"]  / config.log_interval, iter)
+                writer.add_scalar("loss/rot",     loss_dict["rot"]    / config.log_interval, iter)
+                writer.add_scalar("loss/pos",     loss_dict["pos"]    / config.log_interval, iter)
+                writer.add_scalar("loss/traj",    loss_dict["traj"]   / config.log_interval, iter)
+                writer.add_scalar("loss/contact", loss_dict["contact"]/ config.log_interval, iter)
                 
                 for k in loss_dict.keys():
                     loss_dict[k] = 0
