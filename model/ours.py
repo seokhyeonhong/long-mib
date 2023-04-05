@@ -7,18 +7,21 @@ import torch.nn.functional as F
 from pymovis.ops import rotation
 from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet, LocalMultiHeadAttention
 
-def get_mask(batch, context_frames):
+def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
     B, T, D = batch.shape
 
     # 0 for unknown frames, 1 for known frames
     batch_mask = torch.ones(B, T, 1, dtype=batch.dtype, device=batch.device)
     batch_mask[:, context_frames:-1, :] = 0
-    
-    # False for known frames, True for unknown frames
-    attn_mask = torch.zeros(1, T, T, dtype=torch.bool, device=batch.device)
-    attn_mask[:, :, context_frames:-1] = True
 
-    return batch_mask, attn_mask
+    # mask out random partial frames
+    constrained_frames = np.arange(context_frames, T-1)
+    constrained_frames = np.random.choice(constrained_frames, int(len(constrained_frames) * ratio_constrained), replace=False)
+    for t in constrained_frames:
+        if np.random.rand() < prob_constrained:
+            batch_mask[:, t, :] = 1
+            
+    return batch_mask
 
 def get_keyframe_relative_position(window_length, context_frames):
     position = torch.arange(window_length, dtype=torch.float32)
@@ -47,73 +50,58 @@ class KeyframeTransformer(nn.Module):
             raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
         
         # encoders
-        self.motion_encoder = nn.Sequential(
-            nn.Linear(self.d_motion - 4, self.d_model), # (motion: D-5, mask: 1), except trajectory features
-            nn.SiLU(),
+        self.encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
-            nn.Dropout(self.dropout),
-        )
-        self.traj_encoder = nn.Sequential(
-            nn.Linear(5, self.d_model),
-            nn.SiLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
         )
         self.keyframe_pos_encoder = nn.Sequential(
             nn.Linear(2, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
             nn.Linear(1, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_head),
             nn.Dropout(self.dropout),
         )
 
         # Transformer layers
-        self.layer_norm = nn.LayerNorm(self.d_model)
-        self.atten_layers = nn.ModuleList()
-        self.cross_layers = nn.ModuleList()
-        self.pffn_layers  = nn.ModuleList()
+        self.layer_norm  = nn.LayerNorm(self.d_model)
+        self.attn_layers = nn.ModuleList()
+        self.pffn_layers = nn.ModuleList()
         
         for _ in range(self.n_layers):
-            self.atten_layers.append(RelativeMultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
-            self.cross_layers.append(LocalMultiHeadAttention(self.d_model, self.d_head, self.n_heads, self.config.fps+1, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.attn_layers.append(RelativeMultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
 
         # decoder
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Linear(self.d_model, self.d_motion - 5), # except trajectory features
         )
     
-    def forward(self, x):
+    def forward(self, x, ratio_constrained=0.1, prob_constrained=0.5):
         B, T, D = x.shape
         
-        motion, traj = torch.split(x, [self.d_motion-5, 5], dim=-1)
+        motion, traj = torch.split(x, [D-5, 5], dim=-1)
 
         # mask
-        batch_mask, atten_mask = get_mask(x, self.config.context_frames)
-
-        # encoders
-        motion = self.motion_encoder(torch.cat([motion*batch_mask, batch_mask], dim=-1))
-        traj   = self.traj_encoder(traj)
+        batch_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
+        x = self.encoder(torch.cat([motion * batch_mask, traj, batch_mask], dim=-1))
 
         # add keyframe positional embedding
         keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
         keyframe_pos = self.keyframe_pos_encoder(keyframe_pos)
-        
-        motion = motion + keyframe_pos
-        traj   = traj   + keyframe_pos
+        x = x + keyframe_pos
 
         # relative distance
         lookup_table = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
@@ -121,17 +109,16 @@ class KeyframeTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            motion = self.atten_layers[i](motion, motion, lookup_table, mask=atten_mask)
-            motion = self.cross_layers[i](motion, traj)
-            motion = self.pffn_layers[i](motion)
+            x = self.attn_layers[i](x, x, lookup_table, mask=None)
+            x = self.pffn_layers[i](x)
 
         # decoder
         if self.pre_layernorm:
-            motion = self.layer_norm(motion)
+            x = self.layer_norm(x)
         
-        motion = self.decoder(motion)
+        x = self.decoder(x)
 
-        return motion, batch_mask
+        return x, batch_mask
 
 class InterpolationTransformer(nn.Module):
     def __init__(self, d_motion, config):

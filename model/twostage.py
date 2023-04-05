@@ -152,13 +152,6 @@ class DetailTransformer(nn.Module):
             nn.PReLU(),
             nn.Dropout(self.dropout),
         )
-        self.keyframe_pos_encoder = nn.Sequential(
-            nn.Linear(2, self.d_model),
-            nn.PReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.d_model, self.d_model),
-            nn.Dropout(self.dropout),
-        )
         self.relative_pos_encoder = nn.Sequential(
             nn.Linear(1, self.d_model),
             nn.PReLU(),
@@ -188,10 +181,6 @@ class DetailTransformer(nn.Module):
         
         # mask
         x = self.encoder(torch.cat([x, batch_mask], dim=-1))
-
-        # add keyframe positional embedding
-        keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames).to(x.device)
-        x = x + self.keyframe_pos_encoder(keyframe_pos)
 
         # relative distance range: [-T+1, ..., T-1], 2T-1 values in total
         rel_dist = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)

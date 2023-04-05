@@ -18,7 +18,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformerLocal
+from model.ours import KeyframeTransformer
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, GT_prob, pred_prob, time_per_motion):
@@ -55,7 +55,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/keyframe_local.json")
+    config = Config.load("configs/keyframe.json")
     util.seed()
 
     # dataset
@@ -70,7 +70,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = KeyframeTransformerLocal(dataset.shape[-1], config).to(device) # exclude trajectory
+    model = KeyframeTransformer(dataset.shape[-1], config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 
@@ -89,7 +89,8 @@ if __name__ == "__main__":
 
             # forward
             batch = (GT_motion - kf_mean) / kf_std
-            pred_motion, _ = model.forward(batch)
+            pred_motion, mask = model.forward(batch)
+            pred_motion = batch[..., :-5] * mask + pred_motion * (1 - mask)
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)

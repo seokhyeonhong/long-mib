@@ -19,7 +19,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformerLocal, InterpolationTransformer
+from model.ours import KeyframeTransformer, InterpolationTransformer
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, keyframes, time_per_motion, traj):
@@ -87,7 +87,7 @@ class KeyframeApp(MotionApp):
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/keyframe_local.json")
+    config = Config.load("configs/keyframe.json")
     util.seed()
 
     # dataset
@@ -103,17 +103,16 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = KeyframeTransformerLocal(dataset.shape[-1], config).to(device) # exclude trajectory
+    model = KeyframeTransformer(dataset.shape[-1], config).to(device) # exclude trajectory
     testutil.load_model(model, config)
     model.eval()
 
-    interp = InterpolationTransformer(dataset.shape[-1] - 1, Config.load("configs/interp_complete.json")).to(device) # exclude prob
-    testutil.load_model(interp, Config.load("configs/interp_complete.json"))
+    interp = InterpolationTransformer(dataset.shape[-1] - 1, Config.load("configs/interp.json")).to(device) # exclude prob
+    testutil.load_model(interp, Config.load("configs/interp.json"))
     interp.eval()
 
-    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/interp_complete.json")).statistics(dim=(0, 1))
+    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/interp.json")).statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
-    motion_mean, motion_std = motion_mean[..., :-5], motion_std[..., :-5] # exclude trajectory
 
     # character
     ybot = FBX("dataset/ybot.fbx")
@@ -185,20 +184,21 @@ if __name__ == "__main__":
                 motion_batch = torch.cat([local_R6, root_p], dim=-1)
 
                 # interpolate
-                # motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
+                motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
+                motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
 
-                # # refine
-                # motion_batch = (motion_batch - motion_mean) / motion_std
-                # pred, _ = interp.forward(motion_batch, keyframes, GT_traj[b:b+1])
-                # pred[:, :config.context_frames] = motion_batch[:, :config.context_frames]
-                # pred[:, -1] = motion_batch[:, -1]
+                # refine
+                motion_batch = (motion_batch - motion_mean) / motion_std
+                pred, _ = interp.forward(motion_batch, keyframes)
+                pred[:, :config.context_frames] = motion_batch[:, :config.context_frames, :-5]
+                pred[:, -1] = motion_batch[:, -1, :-5]
                 
-                # results.append(pred.clone())
-                results.append(motion_batch.clone())
+                results.append(pred.clone())
+                # results.append(motion_batch.clone())
             
             # concatenate
             pred_motion = torch.cat(results, dim=0)
-            pred_motion = pred_motion * motion_std + motion_mean
+            pred_motion = pred_motion * motion_std[:-5] + motion_mean[:-5]
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-9, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 

@@ -40,14 +40,13 @@ if __name__ == "__main__":
     print("Initializing model...")
     model = KeyframeTransformer(dataset.shape[-1], config).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
-    scheduler = trainutil.get_noam_scheduler(config, optim)
-    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)#, scheduler)
+    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)
     init_iter = iter
 
     # save and log
     if not os.path.exists(config.save_dir):
         os.makedirs(config.save_dir)
-    # config.write(os.path.join(config.save_dir, "config.json"))
+    config.write(os.path.join(config.save_dir, "config.json"))
     writer = SummaryWriter(config.log_dir)
 
     # training loop
@@ -65,7 +64,7 @@ if __name__ == "__main__":
 
             # GT
             GT_keyframe = GT_keyframe.to(device)
-            GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_keyframe, [D-9, 3, 1, 5], dim=-1)
+            GT_local_R6, GT_root_p, GT_kf_score, GT_traj = torch.split(GT_keyframe, [D-9, 3, 1, 5], dim=-1)
             GT_local_R6 = GT_local_R6.reshape(B, T, -1, 6)
             _, GT_global_p = motionops.R6_fk(GT_local_R6, GT_root_p, skeleton)
 
@@ -74,27 +73,29 @@ if __name__ == "__main__":
             pred_motion, _ = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
 
+            # predicted motion features
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
-            # pred_kf_prob = torch.sigmoid(pred_kf_prob)
+            pred_kf_score = torch.clip(pred_kf_prob, 0, 1)
             pred_local_R6 = pred_local_R6.reshape(B, T, -1, 6)
             _, pred_global_p = motionops.R6_fk(pred_local_R6, pred_root_p, skeleton)
 
+            # predicted trajectory
             pred_traj_xz = pred_root_p[..., (0, 2)]
             pred_root_R = rotation.R6_to_R(pred_local_R6[:, :, 0])
             pred_traj_forward = F.normalize(torch.matmul(pred_root_R, v_forward) * torchconst.XZ(device), dim=-1)
             pred_traj = torch.cat([pred_traj_xz, pred_traj_forward], dim=-1)
 
             # weight by keyframe probability
-            GT_local_R6   = GT_local_R6.reshape(B, T, -1) * GT_kf_prob
-            GT_global_p   = GT_global_p.reshape(B, T, -1) * GT_kf_prob
-            GT_traj       = GT_traj.reshape(B, T, -1) * GT_kf_prob
+            GT_local_R6   = GT_local_R6.reshape(B, T, -1)
+            GT_global_p   = GT_global_p.reshape(B, T, -1)
+            GT_traj       = GT_traj.reshape(B, T, -1)
 
-            pred_local_R6 = pred_local_R6.reshape(B, T, -1) * GT_kf_prob
-            pred_global_p = pred_global_p.reshape(B, T, -1) * GT_kf_prob
-            pred_traj     = pred_traj.reshape(B, T, -1) * GT_kf_prob
+            pred_local_R6 = pred_local_R6.reshape(B, T, -1)
+            pred_global_p = pred_global_p.reshape(B, T, -1)
+            pred_traj     = pred_traj.reshape(B, T, -1)
 
             # loss
-            loss_frame = config.weight_frame * F.l1_loss(pred_kf_prob, GT_kf_prob)
+            loss_frame = config.weight_frame * F.l1_loss(pred_kf_score, GT_kf_score)
             loss_rot   = config.weight_rot   * F.l1_loss(pred_local_R6, GT_local_R6)
             loss_pos   = config.weight_pos   * F.l1_loss(pred_global_p, GT_global_p)
             loss_traj  = config.weight_traj  * F.l1_loss(pred_traj, GT_traj)
@@ -104,7 +105,6 @@ if __name__ == "__main__":
             optim.zero_grad()
             loss.backward()
             optim.step()
-            scheduler.step()
 
             # log
             loss_dict["total"]  += loss.item()
@@ -125,10 +125,10 @@ if __name__ == "__main__":
                     loss_dict[k] = 0
             
             if iter % config.save_interval == 0:
-                trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+                trainutil.save_ckpt(model, optim, epoch, iter, config)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
             
             iter += 1
     
     print(f"Training finished in {time.perf_counter() - start_time:.2f} seconds")
-    trainutil.save_ckpt(model, optim, epoch, iter, config, scheduler)
+    trainutil.save_ckpt(model, optim, epoch, iter, config)

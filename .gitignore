@@ -3,6 +3,7 @@ __pycache__/
 log*/
 save*/
 capture/
+illustrator/
 
 # file types
 *.pkl
