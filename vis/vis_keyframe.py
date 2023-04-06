@@ -84,16 +84,15 @@ if __name__ == "__main__":
 
             # GT motion
             GT_motion = GT_motion.to(device)
-            GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_motion, [D-9, 3, 1, 5], dim=-1)
+            GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_motion, [D-7, 3, 1, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
             # forward
             batch = (GT_motion - kf_mean) / kf_std
-            pred_motion, mask = model.forward(batch)
-            pred_motion = batch[..., :-5] * mask + pred_motion * (1 - mask)
-            pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
+            pred_motion = model.forward(batch)
+            pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
 
-            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
+            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
             
             # animation

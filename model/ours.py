@@ -370,3 +370,93 @@ class InterpolationTransformerLocal(nn.Module):
         motion = mask * original_motion + (1-mask) * motion
 
         return motion
+
+class InfillTransformerLocal(nn.Module):
+    def __init__(self, d_motion, config):
+        super(InterpolationTransformerLocal, self).__init__()
+        self.d_motion = d_motion
+        self.config = config
+
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+        
+        # encoders
+        self.motion_encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+        )
+
+        # Transformer layers
+        self.layer_norm = nn.LayerNorm(self.d_model)
+        self.atten_layers = nn.ModuleList()
+        self.pffn_layers  = nn.ModuleList()
+        
+        for _ in range(self.n_layers):
+            self.atten_layers.append(LocalMultiHeadAttention(self.d_model, self.d_head, self.n_heads, self.config.fps+1, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+
+        # decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
+        )
+    
+    def get_random_keyframes(self, total_frames):
+        keyframes = [self.config.context_frames-1]
+
+        transition_start = self.config.context_frames
+        while transition_start+self.config.fps < total_frames-1:
+            transition_end = min(transition_start + self.config.fps, total_frames-1)
+            kf = random.randint(transition_start + 5, transition_end)
+            keyframes.append(kf)
+            transition_start = kf
+
+        if keyframes[-1] != total_frames - 1:
+            keyframes.append(total_frames - 1)
+        
+        return keyframes
+
+    def get_mask_by_keyframe(self, x, keyframes):
+        B, T, D = x.shape
+        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
+        mask[:, :self.config.context_frames] = 1
+        mask[:, -1] = 1
+        mask[:, keyframes] = 1
+        return mask
+    
+    def forward(self, x, keyframes):
+        B, T, D = x.shape
+
+        original_motion = x[..., :-3].clone()
+        
+        # mask
+        mask = self.get_mask_by_keyframe(x, keyframes)
+        x = self.motion_encoder(torch.cat([x, mask], dim=-1))
+
+        # Transformer encoder layers
+        for i in range(self.n_layers):
+            x = self.atten_layers[i](x, x)
+            x = self.pffn_layers[i](x)
+        
+        # decoder
+        if self.pre_layernorm:
+            x = self.layer_norm(x)
+        
+        x = self.decoder(x)
+
+        x = mask * original_motion + (1-mask) * x
+
+        return x

@@ -19,7 +19,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer, InterpolationTransformer
+from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, keyframes, time_per_motion, traj):
@@ -107,11 +107,12 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    interp = InterpolationTransformer(dataset.shape[-1] - 1, Config.load("configs/interp.json")).to(device) # exclude prob
-    testutil.load_model(interp, Config.load("configs/interp.json"))
+    interp_config = Config.load("configs/interp_local.json")
+    interp = InterpolationTransformerLocal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    testutil.load_model(interp, interp_config)
     interp.eval()
 
-    motion_mean, motion_std = MotionDataset(train=False, config=Config.load("configs/interp.json")).statistics(dim=(0, 1))
+    motion_mean, motion_std = MotionDataset(train=False, config=interp_config).statistics(dim=(0, 1))
     motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
 
     # character
@@ -132,7 +133,7 @@ if __name__ == "__main__":
             # GT motion
             GT_motion = GT_motion.to(device)
 
-            GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_motion, [D-9, 3, 1, 5], dim=-1)
+            GT_local_R6, GT_root_p, GT_kf_prob, GT_traj = torch.split(GT_motion, [D-7, 3, 1, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
             
             # modified traj
@@ -145,13 +146,13 @@ if __name__ == "__main__":
 
             # forward
             batch = (GT_motion - kf_mean) / kf_std
-            pred_motion, _ = model.forward(batch)
-            pred_motion = pred_motion * kf_std[..., :-5] + kf_mean[..., :-5] # exclude traj features
+            pred_motion = model.forward(batch)
+            pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
             # pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
             # pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
             # pred_motion[:, :, toe_fids] = GT_motion[:, :, toe_fids] # restore toe features
 
-            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-9, 3, 1], dim=-1)
+            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
             pred_local_R6 = rotation.R_to_R6(rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))).reshape(B, T, -1)
 
             # for each batch
@@ -187,19 +188,17 @@ if __name__ == "__main__":
                 motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
                 motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
 
-                # refine
+                # # refine
                 motion_batch = (motion_batch - motion_mean) / motion_std
-                pred, _ = interp.forward(motion_batch, keyframes)
-                pred[:, :config.context_frames] = motion_batch[:, :config.context_frames, :-5]
-                pred[:, -1] = motion_batch[:, -1, :-5]
+                pred = interp.forward(motion_batch, keyframes)
                 
                 results.append(pred.clone())
                 # results.append(motion_batch.clone())
             
             # concatenate
             pred_motion = torch.cat(results, dim=0)
-            pred_motion = pred_motion * motion_std[:-5] + motion_mean[:-5]
-            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-9, 3], dim=-1)
+            pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
+            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
             # animation
