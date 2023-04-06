@@ -120,7 +120,6 @@ class KeyframeTransformer(nn.Module):
             x = self.layer_norm(x)
         
         x = self.decoder(x)
-        x = motion_original * batch_mask + x * (1 - batch_mask)
         return x
 
 class InterpolationTransformerGlobal(nn.Module):
@@ -249,7 +248,6 @@ class InterpolationTransformerGlobal(nn.Module):
         x = self.decoder(x) # residual of the input motion
 
         motion = original_motion + x
-        motion = mask * original_motion + (1-mask) * motion
 
         return motion
 
@@ -575,7 +573,5 @@ class InfillTransformerLocal(nn.Module):
             x = self.layer_norm(x)
         
         x = self.decoder(x)
-
-        x = mask * original_motion + (1-mask) * x
 
         return x
