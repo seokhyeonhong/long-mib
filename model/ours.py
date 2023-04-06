@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from pymovis.ops import rotation
+from pymovis.learning.mlp import MultiLinear
 from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet, LocalMultiHeadAttention
 
 def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
@@ -142,10 +143,10 @@ class InterpolationTransformerGlobal(nn.Module):
         # encoders
         self.motion_encoder = nn.Sequential(
             nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
         )
         self.relative_pos_encoder = nn.Sequential(
@@ -168,7 +169,7 @@ class InterpolationTransformerGlobal(nn.Module):
         # decoder
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
         )
     
@@ -272,10 +273,10 @@ class InterpolationTransformerLocal(nn.Module):
         # encoders
         self.motion_encoder = nn.Sequential(
             nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
         )
 
@@ -291,7 +292,7 @@ class InterpolationTransformerLocal(nn.Module):
         # decoder
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
         )
     
@@ -329,7 +330,6 @@ class InterpolationTransformerLocal(nn.Module):
             R2 = R[:, kf2].unsqueeze(1)
             R_diff = torch.matmul(R1.transpose(-1, -2), R2)
             angle_diff, axis_diff = rotation.R_to_A(R_diff)
-            # angle_diff += torch.randn_like(angle_diff) * 0.01
             angle_diff = t * angle_diff
             axis_diff = axis_diff.repeat(1, len(t), 1, 1)
             R_diff = rotation.A_to_R(angle_diff, axis_diff)
@@ -340,9 +340,8 @@ class InterpolationTransformerLocal(nn.Module):
             p1 = p[:, kf1].unsqueeze(1)
             p2 = p[:, kf2].unsqueeze(1)
             p_diff = p2 - p1
-            # p_diff += torch.randn_like(p_diff) * 0.01
             p[:, kf1:kf2] = p1 + t * p_diff
-        
+
         R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
         return torch.cat([R6, p], dim=-1)
     
@@ -364,12 +363,132 @@ class InterpolationTransformerLocal(nn.Module):
         if self.pre_layernorm:
             x = self.layer_norm(x)
         
-        x = self.decoder(x) # residual of the input motion
+        x = self.decoder(x)
 
-        motion = original_motion + x
-        motion = mask * original_motion + (1-mask) * motion
+        return original_motion + x # residual connection to original motion
 
-        return motion
+class InterpolationTransformerPhase(nn.Module):
+    def __init__(self, d_motion, config):
+        super(InterpolationTransformerPhase, self).__init__()
+        self.d_motion = d_motion
+        self.config = config
+
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+        
+        # encoders
+        self.motion_encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+        )
+
+        # Transformer layers
+        self.layer_norm = nn.LayerNorm(self.d_model)
+        self.atten_layers = nn.ModuleList()
+        self.pffn_layers  = nn.ModuleList()
+        
+        for _ in range(self.n_layers):
+            self.atten_layers.append(LocalMultiHeadAttention(self.d_model, self.d_head, self.n_heads, self.config.fps+1, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+
+        # gating
+        self.gating = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Linear(self.d_model, self.n_heads),
+            nn.Sigmoid(),
+        )
+        self.decoder = nn.Sequential(
+            MultiLinear(self.n_heads, self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_motion - 3), # exclude trajectory
+        )
+    
+    def get_random_keyframes(self, total_frames):
+        keyframes = [self.config.context_frames-1]
+
+        transition_start = self.config.context_frames
+        while transition_start+self.config.fps < total_frames-1:
+            transition_end = min(transition_start + self.config.fps, total_frames-1)
+            kf = random.randint(transition_start + 5, transition_end)
+            keyframes.append(kf)
+            transition_start = kf
+
+        if keyframes[-1] != total_frames - 1:
+            keyframes.append(total_frames - 1)
+        
+        return keyframes
+
+    def get_mask_by_keyframe(self, x, keyframes):
+        B, T, D = x.shape
+        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
+        mask[:, :self.config.context_frames] = 1
+        mask[:, -1] = 1
+        mask[:, keyframes] = 1
+        return mask
+
+    def get_interpolated_motion(self, local_R, root_p, keyframes):
+        R, p = local_R.clone(), root_p.clone()
+        for i in range(len(keyframes) - 1):
+            kf1, kf2 = keyframes[i], keyframes[i+1]
+            t = torch.arange(0, 1, 1/(kf2-kf1), dtype=R.dtype, device=R.device).unsqueeze(-1)
+            
+            # interpolate joint orientations
+            R1 = R[:, kf1].unsqueeze(1)
+            R2 = R[:, kf2].unsqueeze(1)
+            R_diff = torch.matmul(R1.transpose(-1, -2), R2)
+            angle_diff, axis_diff = rotation.R_to_A(R_diff)
+            angle_diff = t * angle_diff
+            axis_diff = axis_diff.repeat(1, len(t), 1, 1)
+            R_diff = rotation.A_to_R(angle_diff, axis_diff)
+
+            R[:, kf1:kf2] = torch.matmul(R1, R_diff)
+
+            # interpolate root positions
+            p1 = p[:, kf1].unsqueeze(1)
+            p2 = p[:, kf2].unsqueeze(1)
+            p_diff = p2 - p1
+            p[:, kf1:kf2] = p1 + t * p_diff
+
+        R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
+        return torch.cat([R6, p], dim=-1)
+    
+    def forward(self, x, keyframes):
+        B, T, D = x.shape
+
+        original_motion = x[..., :-3].clone()
+        
+        # mask
+        mask = self.get_mask_by_keyframe(x, keyframes)
+        x = self.motion_encoder(torch.cat([x, mask], dim=-1))
+
+        # Transformer encoder layers
+        for i in range(self.n_layers):
+            x = self.atten_layers[i](x, x)
+            x = self.pffn_layers[i](x)
+        
+        if self.pre_layernorm:
+            x = self.layer_norm(x)
+        
+        # gating
+        weight = self.gating(x)
+        x = self.decoder(x)
+        x = torch.sum(x * weight.unsqueeze(-1), dim=-2)
+
+        return original_motion + x # residual connection to original motion
 
 class InfillTransformerLocal(nn.Module):
     def __init__(self, d_motion, config):
@@ -391,10 +510,10 @@ class InfillTransformerLocal(nn.Module):
         # encoders
         self.motion_encoder = nn.Sequential(
             nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Dropout(self.dropout),
         )
 
@@ -410,7 +529,7 @@ class InfillTransformerLocal(nn.Module):
         # decoder
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
-            nn.SiLU(),
+            nn.PReLU(),
             nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
         )
     

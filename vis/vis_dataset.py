@@ -15,7 +15,6 @@ from pymovis.ops import rotation
 from utility.config import Config
 from utility.dataset import MotionDataset
 from vis.visapp import SingleMotionApp
-from model.ours import InterpolationTransformer
 
 class DatasetApp(MotionApp):
     def __init__(self, motion, model, traj):
@@ -58,28 +57,21 @@ class DatasetApp(MotionApp):
             self.prob_idx -= 1
 
 if __name__ == "__main__":
-    config = Config.load("configs/interp.json")
+    config = Config.load("configs/context.json")
     character = FBX("dataset/ybot.fbx")
     dataset = MotionDataset(train=False, config=config)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     skeleton = dataset.skeleton
 
-    model = InterpolationTransformer(512, config)
     for feature in dataloader:
+        feature = feature[:, :41]
         B, T, D = feature.shape
 
-        local_R6, root_p, traj = torch.split(feature, [D-8, 3, 5], dim=-1)
+        local_R6, root_p, traj = torch.split(feature, [D-6, 3, 3], dim=-1)
         local_R = rotation.R6_to_R(local_R6.reshape(B, T, -1, 6))
 
-        keyframes = model.get_random_keyframes(T)
-        interp_motion = model.get_interpolated_motion(local_R, root_p, keyframes)
-        local_R6, root_p = torch.split(interp_motion, [D-8, 3], dim=-1)
-        local_R = rotation.R6_to_R(local_R6.reshape(B, T, -1, 6))
-
-        for b in range(B):
-            motion = Motion.from_torch(skeleton, local_R[b], root_p[b])
-
-            app_manager = AppManager()
-            app = DatasetApp(motion, character.model(), traj[b])
-            app_manager.run(app)
+        motion = Motion.from_torch(skeleton, local_R.reshape(B*T, -1, 3, 3), root_p.reshape(B*T, 3))
+        app_manager = AppManager()
+        app = SingleMotionApp(motion, character.model(), T)
+        app_manager.run(app)

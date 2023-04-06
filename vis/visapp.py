@@ -9,10 +9,48 @@ class SingleMotionApp(MotionApp):
     def __init__(self, motion, ybot_model, frames_per_motion):
         super().__init__(motion, ybot_model, YBOT_FBX_DICT)
         self.frames_per_motion = frames_per_motion
+        self.show_transition = False
+        self.show_many = False
+        self.copy_model = copy.deepcopy(ybot_model)
+
+    def render(self):
+        super().render()
+
+        if self.show_many:
+            if self.show_transition:
+                ith_motion = self.frame // self.frames_per_motion
+                for i in range(0, self.frames_per_motion, 3):
+                    if i < 10:
+                        self.model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                        Render.model(self.model).draw()
+                    else:
+                        self.copy_model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                        Render.model(self.copy_model).set_albedo_of(glm.vec3(0.5), 0).draw()
+
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
+                Render.model(self.model).draw()
+            else:
+                ith_motion = self.frame // self.frames_per_motion
+                for i in range(0, 10, 3):
+                    self.model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                    Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
+                Render.model(self.model).draw()
+        else:
+            self.model.set_pose_by_source(self.motion.poses[self.frame])
+            Render.model(self.model).draw()
 
     def render_text(self):
         super().render_text()
-        Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
+        # Render.text_on_screen(f"Motion {self.frame // self.frames_per_motion} - Frame {self.frame % self.frames_per_motion}").set_position(10, 10, 0).draw()
+
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+
+        if key == glfw.KEY_Z and action == glfw.PRESS:
+            self.show_transition = not self.show_transition
+        elif key == glfw.KEY_X and action == glfw.PRESS:
+            self.show_many = not self.show_many
 
 class ContextMotionApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, ybot_model, frames_per_motion):
@@ -52,24 +90,6 @@ class ContextMotionApp(MotionApp):
 
         # draw target
         self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 40])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 70])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-        
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 100])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-        
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 130])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-    
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 160])
-        Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
-
-        self.target_model.set_pose_by_source(self.GT_motion.poses[(ith_motion)*self.frames_per_motion + 190])
         Render.model(self.target_model).set_all_color_modes(False).set_all_alphas(0.5).draw()
 
     def render_text(self):

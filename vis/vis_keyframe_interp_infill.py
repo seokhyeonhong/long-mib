@@ -160,7 +160,7 @@ if __name__ == "__main__":
             total_keyframes = []
             for b in tqdm(range(B)):
                 # adaptive keyframe selection
-                keyframes = []
+                keyframes = [config.context_frames-1]
                 transition_start = config.context_frames
                 while transition_start < T:
                     transition_end = min(transition_start + config.fps, T-1)
@@ -213,5 +213,8 @@ if __name__ == "__main__":
             app_manager = AppManager()
             GT_kf_prob = GT_kf_prob.reshape(B*T, -1)
             pred_kf_prob = pred_kf_prob.reshape(B*T, -1)
+
+            for kf in total_keyframes:
+                print(kf)
             app = KeyframeApp(GT_motion, pred_motion, ybot.model(), total_keyframes, T, GT_traj.reshape(B*T, -1).cpu().numpy())
             app_manager.run(app)
