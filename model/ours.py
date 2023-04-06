@@ -373,7 +373,7 @@ class InterpolationTransformerLocal(nn.Module):
 
 class InfillTransformerLocal(nn.Module):
     def __init__(self, d_motion, config):
-        super(InterpolationTransformerLocal, self).__init__()
+        super(InfillTransformerLocal, self).__init__()
         self.d_motion = d_motion
         self.config = config
 
