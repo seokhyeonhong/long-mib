@@ -84,11 +84,10 @@ if __name__ == "__main__":
 
             # keyframes and interpolated motion
             keyframes = model.get_random_keyframes(T)
-            interp_motion = model.get_interpolated_motion(GT_local_R, GT_root_p, keyframes)
-            interp_motion = torch.cat([interp_motion, GT_traj], dim=-1)
+            GT_motion = torch.cat([GT_motion, GT_traj], dim=-1)
 
             # forward
-            batch = (interp_motion - motion_mean) / motion_std
+            batch = (GT_motion - motion_mean) / motion_std
             pred_motion = model.forward(batch, keyframes)
             pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3] # exclude trajectory
 
