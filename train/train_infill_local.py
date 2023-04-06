@@ -16,7 +16,7 @@ from pymovis.ops import motionops, rotation, mathops
 
 from utility.dataset import MotionDataset
 from utility.config import Config
-from model.ours import InterpolationTransformerLocal
+from model.ours import InfillTransformerLocal
 from utility import trainutil
 
 if __name__ == "__main__":
@@ -42,7 +42,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = InterpolationTransformerLocal(dataset.shape[-1], config).to(device)
+    model = InfillTransformerLocal(dataset.shape[-1], config).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
