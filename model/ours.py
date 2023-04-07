@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from pymovis.ops import rotation
 from pymovis.learning.mlp import MultiLinear
-from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet, LocalMultiHeadAttention
+from pymovis.learning.transformer import MultiHeadAttention, PoswiseFeedForwardNet, LocalMultiHeadAttention
 
 def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
     B, T, D = batch.shape
@@ -32,6 +32,57 @@ def get_keyframe_relative_position(window_length, context_frames):
     p_kf = torch.stack([dist_ctx, dist_tgt], dim=-1) # (T, 2)
 
     return p_kf
+
+def __get_interpolated_motion(local_R, root_p, keyframes):
+    R, p = local_R.clone(), root_p.clone()
+    for i in range(len(keyframes) - 1):
+        kf1, kf2 = keyframes[i], keyframes[i+1]
+        t = torch.arange(0, 1, 1/(kf2-kf1), dtype=R.dtype, device=R.device).unsqueeze(-1)
+        
+        # interpolate joint orientations
+        R1 = R[:, kf1].unsqueeze(1)
+        R2 = R[:, kf2].unsqueeze(1)
+        R_diff = torch.matmul(R1.transpose(-1, -2), R2)
+        angle_diff, axis_diff = rotation.R_to_A(R_diff)
+        # angle_diff += torch.randn_like(angle_diff) * 0.01
+        angle_diff = t * angle_diff
+        axis_diff = axis_diff.repeat(1, len(t), 1, 1)
+        R_diff = rotation.A_to_R(angle_diff, axis_diff)
+
+        R[:, kf1:kf2] = torch.matmul(R1, R_diff)
+
+        # interpolate root positions
+        p1 = p[:, kf1].unsqueeze(1)
+        p2 = p[:, kf2].unsqueeze(1)
+        p_diff = p2 - p1
+        # p_diff += torch.randn_like(p_diff) * 0.01
+        p[:, kf1:kf2] = p1 + t * p_diff
+    
+    R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
+    return torch.cat([R6, p], dim=-1)
+
+def __get_random_keyframes(t_ctx, t_max, t_total):
+    keyframes = [t_ctx-1]
+
+    transition_start = t_ctx
+    while transition_start + t_max < t_total - 1:
+        transition_end = min(transition_start + t_max, t_total - 1)
+        kf = random.randint(transition_start + 5, transition_end)
+        keyframes.append(kf)
+        transition_start = kf
+
+    if keyframes[-1] != t_total - 1:
+        keyframes.append(t_total - 1)
+    
+    return keyframes
+
+def __get_mask_by_keyframe(x, t_ctx, keyframes):
+    B, T, D = x.shape
+    mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
+    mask[:, :t_ctx] = 1
+    mask[:, -1] = 1
+    mask[:, keyframes] = 1
+    return mask
 
 class KeyframeTransformer(nn.Module):
     def __init__(self, d_motion, config):
@@ -80,7 +131,7 @@ class KeyframeTransformer(nn.Module):
         self.pffn_layers = nn.ModuleList()
         
         for _ in range(self.n_layers):
-            self.attn_layers.append(RelativeMultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.attn_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
 
         # decoder
@@ -94,8 +145,6 @@ class KeyframeTransformer(nn.Module):
         B, T, D = x.shape
         
         motion, traj = torch.split(x, [D-3, 3], dim=-1)
-
-        motion_original = motion.clone()
 
         # mask
         batch_mask = get_mask(x, self.config.context_frames, ratio_constrained, prob_constrained)
@@ -112,7 +161,7 @@ class KeyframeTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.attn_layers[i](x, x, lookup_table, mask=None)
+            x = self.attn_layers[i](x, x, mask=None, lookup_table=lookup_table)
             x = self.pffn_layers[i](x)
 
         # decoder
@@ -173,55 +222,13 @@ class InterpolationTransformerGlobal(nn.Module):
         )
     
     def get_random_keyframes(self, total_frames):
-        keyframes = [self.config.context_frames-1]
-
-        transition_start = self.config.context_frames
-        while transition_start+self.config.fps < total_frames-1:
-            transition_end = min(transition_start + self.config.fps, total_frames-1)
-            kf = random.randint(transition_start + 5, transition_end)
-            keyframes.append(kf)
-            transition_start = kf
-
-        if keyframes[-1] != total_frames - 1:
-            keyframes.append(total_frames - 1)
-        
-        return keyframes
+        return __get_random_keyframes(self.cofig.context_frames, self.config.fps, total_frames)
 
     def get_mask_by_keyframe(self, x, keyframes):
-        B, T, D = x.shape
-        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
-        mask[:, :self.config.context_frames] = 1
-        mask[:, -1] = 1
-        mask[:, keyframes] = 1
-        return mask
+        return __get_mask_by_keyframe(x, self.config.context_frames, keyframes)
 
     def get_interpolated_motion(self, local_R, root_p, keyframes):
-        R, p = local_R.clone(), root_p.clone()
-        for i in range(len(keyframes) - 1):
-            kf1, kf2 = keyframes[i], keyframes[i+1]
-            t = torch.arange(0, 1, 1/(kf2-kf1), dtype=R.dtype, device=R.device).unsqueeze(-1)
-            
-            # interpolate joint orientations
-            R1 = R[:, kf1].unsqueeze(1)
-            R2 = R[:, kf2].unsqueeze(1)
-            R_diff = torch.matmul(R1.transpose(-1, -2), R2)
-            angle_diff, axis_diff = rotation.R_to_A(R_diff)
-            # angle_diff += torch.randn_like(angle_diff) * 0.01
-            angle_diff = t * angle_diff
-            axis_diff = axis_diff.repeat(1, len(t), 1, 1)
-            R_diff = rotation.A_to_R(angle_diff, axis_diff)
-
-            R[:, kf1:kf2] = torch.matmul(R1, R_diff)
-
-            # interpolate root positions
-            p1 = p[:, kf1].unsqueeze(1)
-            p2 = p[:, kf2].unsqueeze(1)
-            p_diff = p2 - p1
-            # p_diff += torch.randn_like(p_diff) * 0.01
-            p[:, kf1:kf2] = p1 + t * p_diff
-        
-        R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
-        return torch.cat([R6, p], dim=-1)
+        return __get_interpolated_motion(local_R, root_p, keyframes)
     
     def forward(self, x, keyframes):
         B, T, D = x.shape
@@ -277,6 +284,13 @@ class InterpolationTransformerLocal(nn.Module):
             nn.PReLU(),
             nn.Dropout(self.dropout),
         )
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
 
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
@@ -295,53 +309,13 @@ class InterpolationTransformerLocal(nn.Module):
         )
     
     def get_random_keyframes(self, total_frames):
-        keyframes = [self.config.context_frames-1]
-
-        transition_start = self.config.context_frames
-        while transition_start+self.config.fps < total_frames-1:
-            transition_end = min(transition_start + self.config.fps, total_frames-1)
-            kf = random.randint(transition_start + 5, transition_end)
-            keyframes.append(kf)
-            transition_start = kf
-
-        if keyframes[-1] != total_frames - 1:
-            keyframes.append(total_frames - 1)
-        
-        return keyframes
+        return __get_random_keyframes(self.cofig.context_frames, self.config.fps, total_frames)
 
     def get_mask_by_keyframe(self, x, keyframes):
-        B, T, D = x.shape
-        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
-        mask[:, :self.config.context_frames] = 1
-        mask[:, -1] = 1
-        mask[:, keyframes] = 1
-        return mask
+        return __get_mask_by_keyframe(x, self.config.context_frames, keyframes)
 
     def get_interpolated_motion(self, local_R, root_p, keyframes):
-        R, p = local_R.clone(), root_p.clone()
-        for i in range(len(keyframes) - 1):
-            kf1, kf2 = keyframes[i], keyframes[i+1]
-            t = torch.arange(0, 1, 1/(kf2-kf1), dtype=R.dtype, device=R.device).unsqueeze(-1)
-            
-            # interpolate joint orientations
-            R1 = R[:, kf1].unsqueeze(1)
-            R2 = R[:, kf2].unsqueeze(1)
-            R_diff = torch.matmul(R1.transpose(-1, -2), R2)
-            angle_diff, axis_diff = rotation.R_to_A(R_diff)
-            angle_diff = t * angle_diff
-            axis_diff = axis_diff.repeat(1, len(t), 1, 1)
-            R_diff = rotation.A_to_R(angle_diff, axis_diff)
-
-            R[:, kf1:kf2] = torch.matmul(R1, R_diff)
-
-            # interpolate root positions
-            p1 = p[:, kf1].unsqueeze(1)
-            p2 = p[:, kf2].unsqueeze(1)
-            p_diff = p2 - p1
-            p[:, kf1:kf2] = p1 + t * p_diff
-
-        R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
-        return torch.cat([R6, p], dim=-1)
+        return __get_interpolated_motion(local_R, root_p, keyframes)
     
     def forward(self, x, keyframes):
         B, T, D = x.shape
@@ -351,6 +325,12 @@ class InterpolationTransformerLocal(nn.Module):
         # mask
         mask = self.get_mask_by_keyframe(x, keyframes)
         x = self.motion_encoder(torch.cat([x, mask], dim=-1))
+
+        # relative position
+        half_len = self.config.fps // 2
+        rel_pos = torch.arange(-half_len, half_len+1, dtype=x.dtype, device=x.device).unsqueeze(-1) # (2*half_len+1, 1)
+        lookup_table = self.relative_pos_encoder(rel_pos) # (2*half_len+1, d_head)
+        lookup_table = F.pad(lookup_table, (0, 0, T-half_len, T-half_len), mode='constant', value=0) # (2*T+1, d_head)
 
         # Transformer encoder layers
         for i in range(self.n_layers):
@@ -416,53 +396,13 @@ class InterpolationTransformerPhase(nn.Module):
         )
     
     def get_random_keyframes(self, total_frames):
-        keyframes = [self.config.context_frames-1]
-
-        transition_start = self.config.context_frames
-        while transition_start+self.config.fps < total_frames-1:
-            transition_end = min(transition_start + self.config.fps, total_frames-1)
-            kf = random.randint(transition_start + 5, transition_end)
-            keyframes.append(kf)
-            transition_start = kf
-
-        if keyframes[-1] != total_frames - 1:
-            keyframes.append(total_frames - 1)
-        
-        return keyframes
+        return __get_random_keyframes(self.cofig.context_frames, self.config.fps, total_frames)
 
     def get_mask_by_keyframe(self, x, keyframes):
-        B, T, D = x.shape
-        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
-        mask[:, :self.config.context_frames] = 1
-        mask[:, -1] = 1
-        mask[:, keyframes] = 1
-        return mask
+        return __get_mask_by_keyframe(x, self.config.context_frames, keyframes)
 
     def get_interpolated_motion(self, local_R, root_p, keyframes):
-        R, p = local_R.clone(), root_p.clone()
-        for i in range(len(keyframes) - 1):
-            kf1, kf2 = keyframes[i], keyframes[i+1]
-            t = torch.arange(0, 1, 1/(kf2-kf1), dtype=R.dtype, device=R.device).unsqueeze(-1)
-            
-            # interpolate joint orientations
-            R1 = R[:, kf1].unsqueeze(1)
-            R2 = R[:, kf2].unsqueeze(1)
-            R_diff = torch.matmul(R1.transpose(-1, -2), R2)
-            angle_diff, axis_diff = rotation.R_to_A(R_diff)
-            angle_diff = t * angle_diff
-            axis_diff = axis_diff.repeat(1, len(t), 1, 1)
-            R_diff = rotation.A_to_R(angle_diff, axis_diff)
-
-            R[:, kf1:kf2] = torch.matmul(R1, R_diff)
-
-            # interpolate root positions
-            p1 = p[:, kf1].unsqueeze(1)
-            p2 = p[:, kf2].unsqueeze(1)
-            p_diff = p2 - p1
-            p[:, kf1:kf2] = p1 + t * p_diff
-
-        R6 = rotation.R_to_R6(R).reshape(R.shape[0], R.shape[1], -1)
-        return torch.cat([R6, p], dim=-1)
+        return __get_interpolated_motion(local_R, root_p, keyframes)
     
     def forward(self, x, keyframes):
         B, T, D = x.shape

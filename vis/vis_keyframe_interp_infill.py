@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+import pickle
 import copy
 import glm, glfw
 from tqdm import tqdm
@@ -19,7 +20,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal
+from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, InterpolationTransformerPhase
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, model, keyframes, time_per_motion, traj):
@@ -27,25 +28,33 @@ class KeyframeApp(MotionApp):
 
         self.GT_motion = GT_motion
         self.pred_motion = pred_motion
+        print("What's happening?")
 
         self.keyframes = keyframes
         self.time_per_motion = time_per_motion
+        print("What's happening?")
 
         self.GT_model = model
         self.GT_model.set_source_skeleton(self.GT_motion.skeleton, YBOT_FBX_DICT)
+
         self.pred_model = copy.deepcopy(model)
         self.pred_model.set_source_skeleton(self.pred_motion.skeleton, YBOT_FBX_DICT)
         self.pred_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
+        print("What's happening?")
 
         self.key_model = copy.deepcopy(model)
+        print("1")
         self.key_model.set_source_skeleton(self.pred_motion.skeleton, YBOT_FBX_DICT)
+        print("2")
         self.key_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
+        print("What's happening?")
 
         self.show_GT = True
         self.show_pred = True
 
         self.traj = traj
         self.traj_sphere = Render.sphere(0.1).set_albedo(glm.vec3(1, 0, 0))
+        print("What's happening?")
 
     def render(self):
         super().render(render_model=False)
@@ -65,9 +74,11 @@ class KeyframeApp(MotionApp):
         Render.model(self.GT_model).set_all_alphas(0.5).draw()
 
         # nearest but smaller keyframe
-        keyframe = min([k for k in self.keyframes if k > self.frame], default=0)
-        self.key_model.set_pose_by_source(self.pred_motion.poses[keyframe])
-        Render.model(self.key_model).set_all_alphas(0.5).draw()
+        # keyframe = min([k for k in self.keyframes if k > self.frame], default=0)
+        keyframes = [k for k in self.keyframes if ith_motion*self.time_per_motion < k < (ith_motion+1) * self.time_per_motion]
+        for kf in keyframes:
+            self.key_model.set_pose_by_source(self.pred_motion.poses[kf])
+            Render.model(self.key_model).set_all_alphas(0.5).draw()
 
         # trajectory
         for t in range(self.time_per_motion):
@@ -107,8 +118,8 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    interp_config = Config.load("configs/interp_local.json")
-    interp = InterpolationTransformerLocal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    interp_config = Config.load("configs/interp_global.json")
+    interp = InterpolationTransformerGlobal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
     testutil.load_model(interp, interp_config)
     interp.eval()
 
@@ -148,9 +159,8 @@ if __name__ == "__main__":
             batch = (GT_motion - kf_mean) / kf_std
             pred_motion = model.forward(batch)
             pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
-            # pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-5] # restore context frames
-            # pred_motion[:, -1] = GT_motion[:, -1, :-5] # restore last frame
-            # pred_motion[:, :, toe_fids] = GT_motion[:, :, toe_fids] # restore toe features
+            pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-3] # restore context frames
+            pred_motion[:, -1] = GT_motion[:, -1, :-3] # restore last frame
 
             pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
             pred_local_R6 = rotation.R_to_R6(rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))).reshape(B, T, -1)
@@ -186,18 +196,18 @@ if __name__ == "__main__":
 
                 # interpolate
                 motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
-                motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
+                # motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
 
                 # # refine
-                motion_batch = (motion_batch - motion_mean) / motion_std
-                pred = interp.forward(motion_batch, keyframes)
+                # motion_batch = (motion_batch - motion_mean) / motion_std
+                # pred = interp.forward(motion_batch, keyframes)
                 
-                results.append(pred.clone())
-                # results.append(motion_batch.clone())
+                # results.append(pred.clone())
+                results.append(motion_batch.clone())
             
             # concatenate
             pred_motion = torch.cat(results, dim=0)
-            pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
+            # pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 

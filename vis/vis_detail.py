@@ -57,20 +57,15 @@ if __name__ == "__main__":
     # character
     ybot = FBX("dataset/ybot.fbx")
 
-    noise_jids = [i for i in range(dataset.shape[-1] - 5)]
-    for i in [102, 103, 104, 105, 106, 107, 126, 127, 128, 129, 130, 131]:
-        noise_jids.remove(i)
-
     # training loop
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
             T = config.context_frames + config.max_transition + 1
-            GT_motion = GT_motion[:, :T, :-5]
+            GT_motion = GT_motion[:, :T, :-3] # exclude trajectory
             B, T, D = GT_motion.shape
 
             # GT motion
             GT_motion = GT_motion.to(device)
-            GT_motion[:, -1, noise_jids] += torch.randn_like(GT_motion[:, -1, noise_jids]) * 0.1
             GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
             GT_local_R6 = rotation.R_to_R6(GT_local_R).reshape(B, T, -1)

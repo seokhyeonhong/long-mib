@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from pymovis.learning.transformer import RelativeMultiHeadAttention, PoswiseFeedForwardNet
+from pymovis.learning.transformer import MultiHeadAttention, PoswiseFeedForwardNet
 from pymovis.learning.embedding import RelativeSinusoidalPositionalEmbedding
 
 def get_mask(batch, context_frames, ratio_constrained=0.1, prob_constrained=0.5):
@@ -82,7 +82,7 @@ class ContextTransformer(nn.Module):
         self.pffn_layers  = nn.ModuleList()
         
         for _ in range(self.n_layers):
-            self.atten_layers.append(RelativeMultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.atten_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
 
         # decoder
@@ -117,7 +117,7 @@ class ContextTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x, lookup_table=lookup_table, mask=atten_mask) # self-attention
+            x = self.atten_layers[i](x, x, mask=atten_mask, lookup_table=lookup_table) # self-attention
             x = self.pffn_layers[i](x)
         
         # decoder
@@ -170,7 +170,7 @@ class DetailTransformer(nn.Module):
         self.pffn_layers  = nn.ModuleList()
         
         for _ in range(self.n_layers):
-            self.atten_layers.append(RelativeMultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.atten_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
 
         # decoder
@@ -194,7 +194,7 @@ class DetailTransformer(nn.Module):
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x, lookup_table, mask=None)
+            x = self.atten_layers[i](x, x, mask=None, lookup_table=lookup_table)
             x = self.pffn_layers[i](x)
         
         # decoder
