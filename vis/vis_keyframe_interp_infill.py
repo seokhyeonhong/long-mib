@@ -118,8 +118,8 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    interp_config = Config.load("configs/interp_global.json")
-    interp = InterpolationTransformerGlobal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    interp_config = Config.load("configs/interp_local.json")
+    interp = InterpolationTransformerLocal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
     testutil.load_model(interp, interp_config)
     interp.eval()
 
