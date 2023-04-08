@@ -318,7 +318,7 @@ class InterpolationTransformerLocal(nn.Module):
     def forward(self, x, keyframes):
         B, T, D = x.shape
 
-        original_motion = x[..., :-3].clone()
+        # original_motion = x[..., :-3].clone()
         
         # mask
         mask = self.get_mask_by_keyframe(x, keyframes)
@@ -341,7 +341,7 @@ class InterpolationTransformerLocal(nn.Module):
         
         x = self.decoder(x)
 
-        return original_motion + x # residual connection to original motion
+        return x
 
 class InterpolationTransformerPhase(nn.Module):
     def __init__(self, d_motion, config):

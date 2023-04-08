@@ -28,11 +28,9 @@ class KeyframeApp(MotionApp):
 
         self.GT_motion = GT_motion
         self.pred_motion = pred_motion
-        print("What's happening?")
 
         self.keyframes = keyframes
         self.time_per_motion = time_per_motion
-        print("What's happening?")
 
         self.GT_model = model
         self.GT_model.set_source_skeleton(self.GT_motion.skeleton, YBOT_FBX_DICT)
@@ -40,21 +38,16 @@ class KeyframeApp(MotionApp):
         self.pred_model = copy.deepcopy(model)
         self.pred_model.set_source_skeleton(self.pred_motion.skeleton, YBOT_FBX_DICT)
         self.pred_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
-        print("What's happening?")
 
         self.key_model = copy.deepcopy(model)
-        print("1")
         self.key_model.set_source_skeleton(self.pred_motion.skeleton, YBOT_FBX_DICT)
-        print("2")
         self.key_model.meshes[0].materials[0].albedo = glm.vec3(0.5, 0.5, 0.5)
-        print("What's happening?")
 
         self.show_GT = True
         self.show_pred = True
 
         self.traj = traj
         self.traj_sphere = Render.sphere(0.1).set_albedo(glm.vec3(1, 0, 0))
-        print("What's happening?")
 
     def render(self):
         super().render(render_model=False)
@@ -196,18 +189,18 @@ if __name__ == "__main__":
 
                 # interpolate
                 motion_batch = interp.get_interpolated_motion(local_R, root_p, keyframes)
-                # motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
+                motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
 
-                # # refine
-                # motion_batch = (motion_batch - motion_mean) / motion_std
-                # pred = interp.forward(motion_batch, keyframes)
+                # refine
+                motion_batch = (motion_batch - motion_mean) / motion_std
+                pred = interp.forward(motion_batch, keyframes)
                 
-                # results.append(pred.clone())
-                results.append(motion_batch.clone())
+                results.append(pred.clone())
+                # results.append(motion_batch.clone())
             
             # concatenate
             pred_motion = torch.cat(results, dim=0)
-            # pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
+            pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
