@@ -12,10 +12,10 @@
     "contact_joint_names": ["LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"],
     "contact_vel_threshold": 2e-4,
 
-    "log_dir": "log/InterpolationTransformerPhase",
+    "log_dir": "log/RefineVAE",
     "log_interval": 100,
 
-    "save_dir": "save/InterpolationTransformerPhase",
+    "save_dir": "save/RefineVAE",
     "save_interval": 10000,
 
     "batch_size": 64,
@@ -35,5 +35,5 @@
     "weight_pos": 1.0,
     "weight_vel": 0.5,
     "weight_traj": 0.5,
-    "weight_contact": 0.2
+    "weight_kl": 0.1
 }

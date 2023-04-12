@@ -12,6 +12,7 @@ class SingleMotionApp(MotionApp):
         self.show_transition = False
         self.show_many = False
         self.copy_model = copy.deepcopy(ybot_model)
+        self.sphere = Render.sphere(0.05).set_albedo([1, 0, 0])
 
     def render(self):
         super().render()
@@ -39,6 +40,10 @@ class SingleMotionApp(MotionApp):
         else:
             self.model.set_pose_by_source(self.motion.poses[self.frame])
             Render.model(self.model).draw()
+        
+        ith_motion = self.frame // self.frames_per_motion
+        for i in range(ith_motion*self.frames_per_motion, (ith_motion+1)*self.frames_per_motion):
+            self.sphere.set_position(self.motion.poses[i].root_p[0], 0, self.motion.poses[i].root_p[2]).draw()
 
     def render_text(self):
         super().render_text()

@@ -74,13 +74,219 @@ def _get_random_keyframes(t_ctx, t_max, t_total):
     
     return keyframes
 
-def _get_mask_by_keyframe(x, t_ctx, keyframes):
+def _get_mask_by_keyframe(x, t_ctx, keyframes=None):
     B, T, D = x.shape
     mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
     mask[:, :t_ctx] = 1
     mask[:, -1] = 1
-    mask[:, keyframes] = 1
+    if keyframes is not None:
+        mask[:, keyframes] = 1
     return mask
+
+class KeyframeVAE(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeVAE, self).__init__()
+        self.d_motion = d_motion
+        self.config = config
+
+        self.encoder = KeyframeEncoder(d_motion, config)
+        self.decoder = KeyframeDecoder(d_motion, config)
+
+class KeyframeEncoder(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeEncoder, self).__init__()
+        self.d_motion = d_motion
+        self.config = config
+
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+
+        # input token for mean and logvar of VAE
+        self.mean_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+        self.logvar_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+
+        # encoders
+        self.encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 3, self.d_model), # (motion, mask, mu, logvar)
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+        )
+        self.keyframe_pos_encoder = nn.Sequential(
+            nn.Linear(2, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.Dropout(self.dropout),
+        )
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
+
+        # Transformer layers
+        self.layer_norm  = nn.LayerNorm(self.d_model)
+        self.attn_layers = nn.ModuleList()
+        self.pffn_layers = nn.ModuleList()
+        
+        for _ in range(self.n_layers):
+            self.attn_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+        
+        # output
+        self.decoder = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
+        )
+    
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def forward(self, x):
+        B, T, D = x.shape
+
+        # split
+        motion, traj = torch.split(x, [D-3, 3], dim=-1)
+
+        # get mask
+        batch_mask = get_mask(x, self.config.context_frames, ratio_constrained=0.0, prob_constrained=0.0)
+        x = torch.cat([motion*batch_mask, traj, batch_mask], dim=-1)
+
+        # concat mean and logvar tokens
+        x = torch.cat([self.mean_token.repeat(B, 1, 1), self.logvar_token.repeat(B, 1, 1), x], dim=1)
+        T += 2
+
+        # encoder
+        x = self.encoder(x)
+        
+        # keyframe position encoding
+        keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames+2)
+        keyframe_pos = self.keyframe_pos_encoder(keyframe_pos)
+        x = x + keyframe_pos
+
+        # relative position encoding
+        lookup_table = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
+        lookup_table = self.relative_pos_encoder(lookup_table) # (2T-1, d_head)
+
+        # Transformer layers
+        for attn_layer, pffn_layer in zip(self.attn_layers, self.pffn_layers):
+            x = attn_layer(x, x, lookup_table=lookup_table, mask=None)
+            x = pffn_layer(x)
+        
+        # output
+        if self.pre_layernorm:
+            x = self.layer_norm(x)
+        
+        x = self.decoder(x)
+        mean, logvar = x[:, 0], x[:, 1]
+        return mean, logvar
+
+class KeyframeDecoder(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeDecoder, self).__init__()
+        self.d_motion = d_motion
+        self.config = config
+
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+
+        # encoders
+        self.encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+        )
+        self.keyframe_pos_encoder = nn.Sequential(
+            nn.Linear(2, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.Dropout(self.dropout),
+        )
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
+
+        # Transformer layers
+        self.layer_norm  = nn.LayerNorm(self.d_model)
+        self.attn_layers = nn.ModuleList()
+        self.pffn_layers = nn.ModuleList()
+        
+        for _ in range(self.n_layers):
+            self.attn_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+        
+        # output
+        self.decoder = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.PReLU(),
+            nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
+        )
+
+    def forward(self, x, z):
+        B, T, D = x.shape
+
+        # split
+        motion, traj = torch.split(x, [D-3, 3], dim=-1)
+
+        # get mask
+        batch_mask = get_mask(x, self.config.context_frames, ratio_constrained=0.0, prob_constrained=0.0)
+        x = torch.cat([motion*batch_mask, traj, batch_mask], dim=-1)
+
+        # encoder
+        x = self.encoder(x)
+        
+        # keyframe position encoding
+        keyframe_pos = get_keyframe_relative_position(T, self.config.context_frames)
+        keyframe_pos = self.keyframe_pos_encoder(keyframe_pos)
+        x = x + keyframe_pos
+
+        # relative position encoding
+        lookup_table = torch.arange(-T+1, T, dtype=torch.float32).unsqueeze(-1).to(x.device) # (2T-1, 1)
+        lookup_table = self.relative_pos_encoder(lookup_table) # (2T-1, d_head)
+
+        # Transformer layers
+        for attn_layer, pffn_layer in zip(self.attn_layers, self.pffn_layers):
+            x = attn_layer(x, z, lookup_table=lookup_table, mask=None)
+            x = pffn_layer(x)
+        
+        # output
+        if self.pre_layernorm:
+            x = self.layer_norm(x)
+        
+        x = self.decoder(x)
+        return x
 
 class KeyframeTransformer(nn.Module):
     def __init__(self, d_motion, config):
@@ -318,8 +524,6 @@ class InterpolationTransformerLocal(nn.Module):
     def forward(self, x, keyframes):
         B, T, D = x.shape
 
-        # original_motion = x[..., :-3].clone()
-        
         # mask
         mask = self.get_mask_by_keyframe(x, keyframes)
         x = self.motion_encoder(torch.cat([x, mask], dim=-1))
@@ -343,11 +547,11 @@ class InterpolationTransformerLocal(nn.Module):
 
         return x
 
-class InterpolationTransformerPhase(nn.Module):
+class RefineEncoder(nn.Module):
     def __init__(self, d_motion, config):
-        super(InterpolationTransformerPhase, self).__init__()
+        super(RefineEncoder, self).__init__()
         self.d_motion = d_motion
-        self.config = config
+        self.config   = config
 
         self.d_model        = config.d_model
         self.n_layers       = config.n_layers
@@ -359,17 +563,28 @@ class InterpolationTransformerPhase(nn.Module):
 
         if self.d_model % self.n_heads != 0:
             raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
-        
+
+        # mean and logvar token
+        self.mean_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+        self.logvar_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+
         # encoders
         self.motion_encoder = nn.Sequential(
-            nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
+            nn.Linear(self.d_motion, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
             nn.Dropout(self.dropout),
         )
-
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
+        
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.atten_layers = nn.ModuleList()
@@ -378,59 +593,41 @@ class InterpolationTransformerPhase(nn.Module):
         for _ in range(self.n_layers):
             self.atten_layers.append(LocalMultiHeadAttention(self.d_model, self.d_head, self.n_heads, self.config.fps+1, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
-
-        # gating
-        self.gating = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model),
-            nn.PReLU(),
-            nn.Linear(self.d_model, self.n_heads),
-            nn.Sigmoid(),
-        )
-        self.decoder = nn.Sequential(
-            MultiLinear(self.n_heads, self.d_model, self.d_model),
-            nn.PReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.d_model, self.d_motion - 3), # exclude trajectory
-        )
     
-    def get_random_keyframes(self, total_frames):
-        return _get_random_keyframes(self.config.context_frames, self.config.fps, total_frames)
-
-    def get_mask_by_keyframe(self, x, keyframes):
-        return _get_mask_by_keyframe(x, self.config.context_frames, keyframes)
-
-    def get_interpolated_motion(self, local_R, root_p, keyframes):
-        return _get_interpolated_motion(local_R, root_p, keyframes)
-    
-    def forward(self, x, keyframes):
+    def forward(self, x):
         B, T, D = x.shape
 
-        original_motion = x[..., :-3].clone()
-        
-        # mask
-        mask = self.get_mask_by_keyframe(x, keyframes)
-        x = self.motion_encoder(torch.cat([x, mask], dim=-1))
+        # encoder
+        x = self.motion_encoder(x)
+
+        # mean and logvar token
+        mean_token   = self.mean_token.repeat(B, 1, 1)
+        logvar_token = self.logvar_token.repeat(B, 1, 1)
+        x = torch.cat([mean_token, logvar_token, x], dim=1)
+        T += 2
+
+        # relative position
+        half_len = self.config.fps // 2
+        rel_pos = torch.arange(-half_len, half_len+1, dtype=x.dtype, device=x.device).unsqueeze(-1) # (2*half_len+1, 1)
+        lookup_table = self.relative_pos_encoder(rel_pos) # (2*half_len+1, d_head)
+        lookup_table = F.pad(lookup_table, (0, 0, T-half_len-1, T-half_len-1), mode='constant', value=0) # (2*T-1, d_head)
 
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x)
+            x = self.atten_layers[i](x, x, lookup_table=lookup_table)
             x = self.pffn_layers[i](x)
         
         if self.pre_layernorm:
             x = self.layer_norm(x)
-        
-        # gating
-        weight = self.gating(x)
-        x = self.decoder(x)
-        x = torch.sum(x * weight.unsqueeze(-1), dim=-2)
+            
+        mean, logvar = x[:, 0], x[:, 1]
+        return mean, logvar
 
-        return original_motion + x # residual connection to original motion
-
-class InfillTransformerLocal(nn.Module):
+class RefineDecoder(nn.Module):
     def __init__(self, d_motion, config):
-        super(InfillTransformerLocal, self).__init__()
+        super(RefineDecoder, self).__init__()
         self.d_motion = d_motion
-        self.config = config
+        self.config   = config
 
         self.d_model        = config.d_model
         self.n_layers       = config.n_layers
@@ -442,7 +639,7 @@ class InfillTransformerLocal(nn.Module):
 
         if self.d_model % self.n_heads != 0:
             raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
-        
+
         # encoders
         self.motion_encoder = nn.Sequential(
             nn.Linear(self.d_motion + 1, self.d_model), # (motion, mask)
@@ -452,7 +649,14 @@ class InfillTransformerLocal(nn.Module):
             nn.PReLU(),
             nn.Dropout(self.dropout),
         )
-
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
+        
         # Transformer layers
         self.layer_norm = nn.LayerNorm(self.d_model)
         self.atten_layers = nn.ModuleList()
@@ -461,55 +665,72 @@ class InfillTransformerLocal(nn.Module):
         for _ in range(self.n_layers):
             self.atten_layers.append(LocalMultiHeadAttention(self.d_model, self.d_head, self.n_heads, self.config.fps+1, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
             self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
-
+    
         # decoder
         self.decoder = nn.Sequential(
             nn.Linear(self.d_model, self.d_model),
             nn.PReLU(),
             nn.Linear(self.d_model, self.d_motion - 3), # except trajectory features
         )
-    
-    def get_random_keyframes(self, total_frames):
-        keyframes = [self.config.context_frames-1]
-
-        transition_start = self.config.context_frames
-        while transition_start+self.config.fps < total_frames-1:
-            transition_end = min(transition_start + self.config.fps, total_frames-1)
-            kf = random.randint(transition_start + 5, transition_end)
-            keyframes.append(kf)
-            transition_start = kf
-
-        if keyframes[-1] != total_frames - 1:
-            keyframes.append(total_frames - 1)
-        
-        return keyframes
 
     def get_mask_by_keyframe(self, x, keyframes):
-        B, T, D = x.shape
-        mask = torch.zeros(B, T, 1, dtype=x.dtype, device=x.device)
-        mask[:, :self.config.context_frames] = 1
-        mask[:, -1] = 1
-        mask[:, keyframes] = 1
-        return mask
+        return _get_mask_by_keyframe(x, self.config.context_frames, keyframes)
     
-    def forward(self, x, keyframes):
+    def forward(self, x, z, keyframes):
         B, T, D = x.shape
 
-        original_motion = x[..., :-3].clone()
-        
         # mask
         mask = self.get_mask_by_keyframe(x, keyframes)
         x = self.motion_encoder(torch.cat([x, mask], dim=-1))
 
+        # relative position
+        half_len = self.config.fps // 2
+        rel_pos = torch.arange(-half_len, half_len+1, dtype=x.dtype, device=x.device).unsqueeze(-1) # (2*half_len+1, 1)
+        lookup_table = self.relative_pos_encoder(rel_pos) # (2*half_len+1, d_head)
+        lookup_table = F.pad(lookup_table, (0, 0, T-half_len-1, T-half_len-1), mode='constant', value=0) # (2*T-1, d_head)
+
         # Transformer encoder layers
         for i in range(self.n_layers):
-            x = self.atten_layers[i](x, x)
+            x = self.atten_layers[i](x, z, lookup_table=lookup_table)
             x = self.pffn_layers[i](x)
-        
-        # decoder
+
         if self.pre_layernorm:
             x = self.layer_norm(x)
-        
-        x = self.decoder(x)
 
+        x = self.decoder(x)
         return x
+
+class RefineVAE(nn.Module):
+    def __init__(self, d_motion, config):
+        super(RefineVAE, self).__init__()
+
+        self.d_motion = d_motion
+        self.config   = config
+        
+        self.encoder = RefineEncoder(d_motion, config)
+        self.decoder = RefineDecoder(d_motion, config)
+    
+    def get_random_keyframes(self, total_frames):
+        return _get_random_keyframes(self.config.context_frames, self.config.fps, total_frames)
+    
+    def get_interpolated_motion(self, local_R, root_p, keyframes):
+        return _get_interpolated_motion(local_R, root_p, keyframes)
+    
+    def reparameterize(self, mean, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mean + eps * std
+
+    def forward(self, x, x_interp, keyframes):
+        B, T, D = x.shape
+        
+        # encode
+        mean, logvar = self.encoder.forward(x)
+        mean_ = mean[:, None].repeat(1, T, 1)
+        logvar_ = logvar[:, None].repeat(1, T, 1)
+        z = self.reparameterize(mean_, logvar_)
+
+        # decode
+        x_recon = self.decoder.forward(x_interp, z, keyframes)
+
+        return x_recon, mean, logvar
