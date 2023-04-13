@@ -35,5 +35,5 @@
     "weight_pos": 1.0,
     "weight_vel": 0.5,
     "weight_traj": 0.5,
-    "weight_kl": 0.1
+    "weight_kl": 0.001
 }

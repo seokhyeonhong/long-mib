@@ -720,6 +720,13 @@ class RefineVAE(nn.Module):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mean + eps * std
+    
+    def sample(self, x_interp, keyframes):
+        B, T, D = x_interp.shape
+
+        z = torch.randn(B, T, self.config.d_model, device=x_interp.device)
+        x_recon = self.decoder.forward(x_interp, z, keyframes)
+        return x_recon
 
     def forward(self, x, x_interp, keyframes):
         B, T, D = x.shape

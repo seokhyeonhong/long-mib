@@ -20,7 +20,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, InterpolationTransformerPhase
+from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, RefineVAE
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, interp_motion, model, keyframes, time_per_motion, traj):
@@ -130,8 +130,8 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    interp_config = Config.load("configs/interp_local.json")
-    interp = InterpolationTransformerLocal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    interp_config = Config.load("configs/refine_vae.json")
+    interp = RefineVAE(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
     testutil.load_model(interp, interp_config)
     interp.eval()
 
@@ -220,7 +220,8 @@ if __name__ == "__main__":
 
                 # refine
                 motion_batch = (motion_batch - motion_mean) / motion_std
-                pred = interp.forward(motion_batch, keyframes)
+                # pred = interp.forward(motion_batch, keyframes)
+                pred = interp.sample(motion_batch, keyframes)
                 
                 results.append(pred.clone())
                 interps.append(motion_batch[..., :-3].clone())
