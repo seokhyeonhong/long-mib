@@ -20,7 +20,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, RefineVAE
+from model.ours import KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, RefineVAE, RefineGAN
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, interp_motion, model, keyframes, time_per_motion, traj):
@@ -130,8 +130,8 @@ if __name__ == "__main__":
     testutil.load_model(model, config)
     model.eval()
 
-    interp_config = Config.load("configs/refine_vae.json")
-    interp = RefineVAE(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    interp_config = Config.load("configs/refine_gan.json")
+    interp = RefineGAN(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
     testutil.load_model(interp, interp_config)
     interp.eval()
 
@@ -161,10 +161,10 @@ if __name__ == "__main__":
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
             
             # traj interpolation
-            # traj_from = GT_traj[:, config.context_frames-1, -3:].unsqueeze(1)
-            # traj_to   = GT_traj[:, -1, -3:].unsqueeze(1)
-            # t = torch.linspace(0, 1, T - config.context_frames + 1)[:, None].to(device)
-            # GT_traj[:, config.context_frames-1:, -3:] = traj_from + (traj_to - traj_from) * t
+            traj_from = GT_traj[:, config.context_frames-1, -3:].unsqueeze(1)
+            traj_to   = GT_traj[:, -1, -3:].unsqueeze(1)
+            t = torch.linspace(0, 1, T - config.context_frames + 1)[:, None].to(device)
+            GT_traj[:, config.context_frames-1:, -3:] = traj_from + (traj_to - traj_from) * t
             GT_traj[:, config.context_frames:, -3] = torch.linspace(0, torch.pi, T - config.context_frames)[None, :].to(device)
             GT_traj[:, config.context_frames:, -2] = torch.sin(GT_traj[:, config.context_frames:, -3])
             GT_traj[:, config.context_frames:, -1] = GT_traj[:, config.context_frames-1, -1].unsqueeze(1).clone()
@@ -193,7 +193,7 @@ if __name__ == "__main__":
                 keyframes = [config.context_frames-1]
                 transition_start = config.context_frames
                 while transition_start < T:
-                    transition_end = min(transition_start + config.fps, T-1)
+                    transition_end = min(transition_start + 30, T-1)
                     if transition_end == T-1:
                         keyframes.append(T-1)
                         break
@@ -220,8 +220,8 @@ if __name__ == "__main__":
 
                 # refine
                 motion_batch = (motion_batch - motion_mean) / motion_std
-                # pred = interp.forward(motion_batch, keyframes)
-                pred = interp.sample(motion_batch, keyframes)
+                pred = interp.generate(motion_batch, keyframes)
+                # pred = interp.sample(motion_batch, keyframes)
                 
                 results.append(pred.clone())
                 interps.append(motion_batch[..., :-3].clone())

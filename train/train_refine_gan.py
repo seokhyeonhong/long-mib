@@ -16,13 +16,13 @@ from pymovis.ops import motionops, rotation, mathops
 
 from utility.dataset import MotionDataset
 from utility.config import Config
-from model.ours import InterpolationTransformerPhase
+from model.ours import RefineGAN
 from utility import trainutil
 
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/interp_phase.json")
+    config = Config.load("configs/refine_gan.json")
     util.seed()
 
     # dataset
@@ -42,7 +42,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = InterpolationTransformerPhase(dataset.shape[-1], config).to(device)
+    model = RefineGAN(dataset.shape[-1], config).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=config.d_model**-0.5, betas=(0.9, 0.98), eps=1e-9)
     scheduler = trainutil.get_noam_scheduler(config, optim)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config, scheduler)
@@ -62,10 +62,13 @@ if __name__ == "__main__":
         "vel":    0,
         "traj":   0,
         "contact":0,
+        "disc":   0,
+        "gen":    0,
     }
     start_time = time.perf_counter()
     for epoch in range(init_epoch, config.epochs+1):
         for GT_motion in tqdm(dataloader, desc=f"Epoch {epoch} / {config.epochs}", leave=False):
+            """ 1. Data preparation """
             # GT
             T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T].to(device)
@@ -86,10 +89,14 @@ if __name__ == "__main__":
             keyframes = model.get_random_keyframes(T)
             interp_motion = model.get_interpolated_motion(GT_local_R, GT_root_p, keyframes)
             interp_motion = torch.cat([interp_motion, GT_traj], dim=-1)
+            GT_motion = torch.cat([GT_motion, GT_traj], dim=-1)
 
-            # forward
-            batch = (interp_motion - motion_mean) / motion_std
-            pred_motion = model.forward(batch, keyframes)
+            # normalize
+            batch = (GT_motion - motion_mean) / motion_std
+            interp_batch = (interp_motion - motion_mean) / motion_std
+
+            """ 2. Forward pass """
+            pred_motion = model.generate(interp_batch, keyframes)
             pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3] # exclude trajectory
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-6, 3], dim=-1)
@@ -107,14 +114,31 @@ if __name__ == "__main__":
             global_forward = torchconst.FORWARD(device).expand(B, T, -1)
             pred_signed_angle = mathops.signed_angle(global_forward, pred_traj_forward)
             pred_traj = torch.cat([pred_traj_xz, pred_signed_angle.unsqueeze(-1)], dim=-1)
+
             
-            # loss
+            """ 3. Loss and update """
+            # reconstruction
             loss_rot  = config.weight_rot * F.l1_loss(pred_local_R6, GT_local_R6)
             loss_pos  = config.weight_pos * F.l1_loss(pred_global_p, GT_global_p)
             loss_vel  = config.weight_vel * F.l1_loss(pred_global_p[:, 1:] - pred_global_p[:, :-1], GT_global_p[:, 1:] - GT_global_p[:, :-1])
             loss_traj = config.weight_traj * F.l1_loss(pred_traj, GT_traj)
+
+            # contact
             loss_contact = config.weight_contact * F.l1_loss(pred_feet_v * GT_contact, torch.zeros_like(pred_feet_v))
-            loss = loss_rot + loss_pos + loss_vel + loss_traj + loss_contact
+
+            # discriminator
+            disc_real = model.discriminate(batch[..., :-3])
+            disc_fake = model.discriminate((pred_motion.detach() - motion_mean[:-3]) / motion_std[:-3])
+            loss_real = F.mse_loss(disc_real, torch.ones_like(disc_real))
+            loss_fake = F.mse_loss(disc_fake, torch.zeros_like(disc_fake))
+            loss_disc = config.weight_adv * 0.5 * (loss_real + loss_fake)
+
+            # generator
+            disc_fake = model.discriminate((pred_motion - motion_mean[:-3]) / motion_std[:-3])
+            loss_gen  = config.weight_adv * F.mse_loss(disc_fake, torch.ones_like(disc_fake))
+
+            # total
+            loss = loss_rot + loss_pos + loss_vel + loss_traj + loss_contact + loss_disc + loss_gen
 
             # backward
             optim.zero_grad()
@@ -123,22 +147,27 @@ if __name__ == "__main__":
             scheduler.step()
 
             # log
-            loss_dict["total"]  += loss.item()
-            loss_dict["rot"]    += loss_rot.item()
-            loss_dict["pos"]    += loss_pos.item()
-            loss_dict["vel"]    += loss_vel.item()
-            loss_dict["traj"]   += loss_traj.item()
-            loss_dict["contact"]+= loss_contact.item()
+            loss_dict["total"]   += loss.item()
+            loss_dict["rot"]     += loss_rot.item()
+            loss_dict["pos"]     += loss_pos.item()
+            loss_dict["vel"]     += loss_vel.item()
+            loss_dict["traj"]    += loss_traj.item()
+            loss_dict["contact"] += loss_contact.item()
+            loss_dict["disc"]    += loss_disc.item()
+            loss_dict["gen"]     += loss_gen.item()
             
 
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Vel: {loss_dict['vel'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
-                writer.add_scalar("loss/total",  loss_dict["total"]  / config.log_interval, iter)
-                writer.add_scalar("loss/rot",    loss_dict["rot"]    / config.log_interval, iter)
-                writer.add_scalar("loss/pos",    loss_dict["pos"]    / config.log_interval, iter)
-                writer.add_scalar("loss/vel",    loss_dict["vel"]    / config.log_interval, iter)
-                writer.add_scalar("loss/traj",   loss_dict["traj"]   / config.log_interval, iter)
-                writer.add_scalar("loss/contact",loss_dict["contact"]/ config.log_interval, iter)
+                # tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Vel: {loss_dict['vel'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
+                tqdm.write(f"Iter {iter} | Loss: {loss_dict['total'] / config.log_interval:.4f} | Rot: {loss_dict['rot'] / config.log_interval:.4f} | Pos: {loss_dict['pos'] / config.log_interval:.4f} | Vel: {loss_dict['vel'] / config.log_interval:.4f} | Traj: {loss_dict['traj'] / config.log_interval:.4f} | Contact: {loss_dict['contact'] / config.log_interval:.4f} | Disc: {loss_dict['disc'] / config.log_interval:.4f} | Gen: {loss_dict['gen'] / config.log_interval:.4f} | Time: {(time.perf_counter() - start_time) / 60:.2f} min")
+                writer.add_scalar("loss/total",   loss_dict["total"]  / config.log_interval, iter)
+                writer.add_scalar("loss/rot",     loss_dict["rot"]    / config.log_interval, iter)
+                writer.add_scalar("loss/pos",     loss_dict["pos"]    / config.log_interval, iter)
+                writer.add_scalar("loss/vel",     loss_dict["vel"]    / config.log_interval, iter)
+                writer.add_scalar("loss/traj",    loss_dict["traj"]   / config.log_interval, iter)
+                writer.add_scalar("loss/contact", loss_dict["contact"]/ config.log_interval, iter)
+                writer.add_scalar("loss/disc",    loss_dict["disc"]   / config.log_interval, iter)
+                writer.add_scalar("loss/gen",     loss_dict["gen"]    / config.log_interval, iter)
                 
                 for k in loss_dict.keys():
                     loss_dict[k] = 0.0

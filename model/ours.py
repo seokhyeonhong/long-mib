@@ -741,3 +741,258 @@ class RefineVAE(nn.Module):
         x_recon = self.decoder.forward(x_interp, z, keyframes)
 
         return x_recon, mean, logvar
+    
+class RefineDiscriminator(nn.Module):
+    def __init__(self, d_motion, config):
+        super(RefineDiscriminator, self).__init__()
+        self.d_motion = d_motion
+        self.config   = config
+
+        self.d_model        = config.d_model
+
+        self.short_term_disc = nn.Sequential(
+            nn.Conv1d(self.d_motion - 3, self.d_model, kernel_size=5, stride=1, padding=2),
+            nn.PReLU(),
+            nn.Conv1d(self.d_model, self.d_model, kernel_size=5, stride=1, padding=2),
+            nn.PReLU(),
+            nn.Conv1d(self.d_model, 1, kernel_size=5, stride=1, padding=2),
+            nn.Sigmoid(),
+        )
+
+        self.long_term_disc = nn.Sequential(
+            nn.Conv1d(self.d_motion - 3, self.d_model, kernel_size=15, stride=1, padding=7),
+            nn.PReLU(),
+            nn.Conv1d(self.d_model, self.d_model, kernel_size=15, stride=1, padding=7),
+            nn.PReLU(),
+            nn.Conv1d(self.d_model, 1, kernel_size=15, stride=1, padding=7),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        B, T, D = x.shape
+
+        # transpose
+        x_ = x.transpose(1, 2)
+
+        # short-term discriminator
+        x_short = self.short_term_disc(x_)
+
+        # long-term discriminator
+        x_long = self.long_term_disc(x_)
+
+        # concat
+        x = torch.cat([x_short, x_long], dim=1)
+
+        return x
+    
+class RefineGAN(nn.Module):
+    def __init__(self, d_motion, config):
+        super(RefineGAN, self).__init__()
+        self.d_motion = d_motion
+        self.config   = config
+        
+        self.generator = InterpolationTransformerLocal(d_motion, config)
+        self.discriminator = RefineDiscriminator(d_motion, config)
+
+    def get_random_keyframes(self, total_frames):
+        return _get_random_keyframes(self.config.context_frames, self.config.fps, total_frames)
+
+    def get_mask_by_keyframe(self, x, keyframes):
+        return _get_mask_by_keyframe(x, self.config.context_frames, keyframes)
+
+    def get_interpolated_motion(self, local_R, root_p, keyframes):
+        return _get_interpolated_motion(local_R, root_p, keyframes)
+
+    def generate(self, x_interp, keyframes):
+        return self.generator.forward(x_interp, keyframes)
+    
+    def discriminate(self, x):
+        return self.discriminator.forward(x)
+
+class KeyframeGenerator(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeGenerator, self).__init__()
+        self.d_motion       = d_motion
+        self.config         = config
+    
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+        
+        # encoders
+        self.noise_encoder = nn.Sequential(
+            nn.Linear(self.d_motion, self.d_model),
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+        )
+        self.context_encoder = nn.Sequential(
+            nn.Linear(self.d_motion + 4, self.d_model), # (motion, mask(=1), trajectory(=3))
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Dropout(self.dropout),
+        )
+
+        # relative positional encoder
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.d_model, self.d_head),
+            nn.Dropout(self.dropout),
+        )
+
+        # Transformer layers
+        self.layer_norm = nn.LayerNorm(self.d_model)
+        self.atten_layers = nn.ModuleList()
+        self.cross_layers = nn.ModuleList()
+        self.pffn_layers  = nn.ModuleList()
+        
+        for _ in range(self.n_layers):
+            self.atten_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.cross_layers.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.pffn_layers.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+
+        # decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+            nn.Linear(self.d_model, self.d_motion + 1), # (motion, keyframe score(=1))
+        )
+    
+    def forward(self, GT_motion):
+        B, T, D = GT_motion.shape
+        
+        # noise
+        z = torch.randn(B, T, self.d_motion).to(GT_motion.device)
+        z = self.noise_encoder(z)
+
+        # context
+        mask = get_mask(GT_motion, self.config.context_frames, ratio_constrained=0.0, prob_constrained=0.0)
+        motion, traj = torch.split(GT_motion, [D-3, 3], dim=-1)
+        context = torch.cat([motion*mask, traj, mask], dim=-1)
+        context = self.context_encoder(context)
+
+        # relative positional encoding
+        rel_pos = torch.arange(-T+1, T, dtype=torch.float32).to(GT_motion.device)
+        rel_pos = self.relative_pos_encoder(rel_pos.unsqueeze(-1)) # (2T-1, d_head)
+
+        # Transformer layers
+        for i in range(self.n_layers):
+            z = self.atten_layers[i](z, z, lookup_table=rel_pos)
+            z = self.cross_layers[i](z, context, lookup_table=rel_pos)
+            z = self.pffn_layers[i](z)
+
+        if self.pre_layernorm:
+            z = self.layer_norm(z)
+
+        # decoder
+        z = self.decoder(z)
+
+        motion, keyframe_score = torch.split(z, [self.d_motion, 1], dim=-1)
+        keyframe_score = torch.sigmoid(keyframe_score)
+
+        return motion, keyframe_score
+
+class KeyframeDiscriminator(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeDiscriminator, self).__init__()
+        self.d_motion = d_motion
+        self.config   = config
+        
+        self.d_model        = config.d_model
+        self.n_layers       = config.n_layers
+        self.n_heads        = config.n_heads
+        self.d_head         = self.d_model // self.n_heads
+        self.d_ff           = config.d_ff
+        self.pre_layernorm  = config.pre_layernorm
+        self.dropout        = config.dropout
+
+        if self.d_model % self.n_heads != 0:
+            raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
+        
+        # encoder
+        self.encoder = nn.Sequential(
+            nn.Linear(self.d_motion, self.d_model),
+            nn.SiLU(),
+            nn.Linear(self.d_model, self.d_model),
+            nn.SiLU(),
+        )
+
+        # local discriminator - 1D convolution
+        self.local_disc = nn.ModuleList()
+        for _ in range(self.n_layers):
+            self.local_disc.append(nn.Sequential(
+                nn.Conv1d(self.d_model, self.d_model, kernel_size=3, padding=1),
+                nn.SiLU()))
+        self.local_disc.append(nn.Conv1d(self.d_model, 1, kernel_size=3, padding=1))
+        self.local_disc.append(nn.Sigmoid())
+        self.local_disc = nn.Sequential(*self.local_disc)
+
+        # global discriminator - Transformer
+        self.layer_norm = nn.LayerNorm(self.d_model)
+
+        self.relative_pos_encoder = nn.Sequential(
+            nn.Linear(1, self.d_model),
+            nn.PReLU(),
+            nn.Linear(self.d_model, self.d_head),
+        )
+
+        self.global_disc_atten = nn.ModuleList()
+        self.global_disc_pffn  = nn.ModuleList()
+        for _ in range(self.n_layers):
+            self.global_disc_atten.append(MultiHeadAttention(self.d_model, self.d_head, self.n_heads, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+            self.global_disc_pffn.append(PoswiseFeedForwardNet(self.d_model, self.d_ff, dropout=self.dropout, pre_layernorm=self.pre_layernorm))
+        self.global_disc_linear = nn.Sequential(
+            nn.Linear(self.d_model, 1),
+            nn.Sigmoid())
+
+    def forward(self, x):
+        B, T, D = x.shape
+
+        # encoder
+        x = self.encoder(x)
+
+        """ Local discriminator """
+        local = self.local_disc(x.transpose(1, 2)).transpose(1, 2)
+
+        """ Global discriminator """
+        # relative positional encoding
+        rel_pos = torch.arange(-T+1, T, dtype=torch.float32).to(x.device)
+        rel_pos = self.relative_pos_encoder(rel_pos.unsqueeze(-1)) # (2T-1, d_head)
+
+        for i in range(self.n_layers):
+            x = self.global_disc_atten[i](x, x, lookup_table=rel_pos)
+            x = self.global_disc_pffn[i](x)
+
+        if not self.pre_layernorm:
+            x = self.layer_norm(x)
+
+        global_ = self.global_disc_linear(x)
+
+        scores = torch.cat([local, global_], dim=-1)
+        return scores
+
+class KeyframeGAN(nn.Module):
+    def __init__(self, d_motion, config):
+        super(KeyframeGAN, self).__init__()
+        
+        self.generator = KeyframeGenerator(d_motion, config)
+        self.discriminator = KeyframeDiscriminator(d_motion, config)
+
+    def generate(self, x):
+        return self.generator(x)
+    
+    def discriminate(self, x):
+        return self.discriminator(x)
