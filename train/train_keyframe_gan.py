@@ -49,7 +49,8 @@ if __name__ == "__main__":
     # model
     print("Initializing model...")
     model = KeyframeGAN(dataset.shape[-1] - 4, config).to(device) # exclude trajectory and keyframe score
-    model = torch.nn.DataParallel(model)
+    if torch.cuda.device_count() > 1:
+        model = torch.nn.DataParallel(model)
     optim = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)
     init_iter = iter
@@ -83,9 +84,9 @@ if __name__ == "__main__":
             GT_batch = (GT_batch - kf_mean) / kf_std
 
             """ 2. Train discriminator """
-            fake_motion, _ = model.generate(GT_batch)
-            disc_real_short, disc_real_long = model.discriminate(GT_batch[..., :-3])
-            disc_fake_short, disc_fake_long = model.discriminate(fake_motion.detach())
+            fake_motion, _ = model.generate(GT_batch) if isinstance(model, torch.nn.Module) else model.module.generate(GT_batch)
+            disc_real_short, disc_real_long = model.discriminate(GT_batch[..., :-3]) if isinstance(model, torch.nn.Module) else model.module.discriminate(GT_batch[..., :-3])
+            disc_fake_short, disc_fake_long = model.discriminate(fake_motion.detach()) if isinstance(model, torch.nn.Module) else model.module.discriminate(fake_motion.detach())
 
             loss_disc_real = -(torch.mean(torch.log(disc_real_short + 1e-8)) + torch.mean(torch.log(disc_real_long + 1e-8)))
             loss_disc_fake = -(torch.mean(torch.log(1 - disc_fake_short + 1e-8)) + torch.mean(torch.log(1 - disc_fake_long + 1e-8)))
@@ -96,8 +97,8 @@ if __name__ == "__main__":
             optim.step()
 
             """ 3. Train generator """
-            pred_motion, pred_kf_score = model.generate(GT_batch)
-            disc_fake_short, disc_fake_long = model.discriminate(pred_motion)
+            pred_motion, pred_kf_score = model.generate(GT_batch) if isinstance(model, torch.nn.Module) else model.module.generate(GT_batch)
+            disc_fake_short, disc_fake_long = model.discriminate(pred_motion) if isinstance(model, torch.nn.Module) else model.module.discriminate(pred_motion)
             
             # GAN loss
             loss_gen = config.weight_adv * -(torch.mean(torch.log(disc_fake_short + 1e-8)) + torch.mean(torch.log(disc_fake_long + 1e-8)))
@@ -161,7 +162,7 @@ if __name__ == "__main__":
                         GT_batch = (GT_batch - kf_mean) / kf_std
 
                         # forward
-                        pred_motion, pred_kf_score = model.generate(GT_batch)
+                        pred_motion, pred_kf_score = model.generate(GT_batch) if isinstance(model, torch.nn.Module) else model.module.generate(GT_batch)
                         pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3]
                         
                         # predicted motion
