@@ -28,6 +28,7 @@ if __name__ == "__main__":
     # dataset
     print("Loading dataset...")
     dataset    = KeyframeDataset(train=True, config=config)
+    val_dataset = KeyframeDataset(train=False, config=config)
     skeleton   = dataset.skeleton
     v_forward  = torch.from_numpy(config.v_forward).to(device)
 
@@ -42,15 +43,13 @@ if __name__ == "__main__":
     std_motion, _, std_traj = torch.split(kf_std, [D-4, 1, 3], dim=-1)
     kf_std = torch.cat([std_motion, std_traj], dim=-1)
     
-    feet_ids = []
-    for name in config.contact_joint_names:
-        feet_ids.append(skeleton.idx_by_name[name])
-
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
 
     # model
     print("Initializing model...")
     model = KeyframeGAN(dataset.shape[-1] - 4, config).to(device) # exclude trajectory and keyframe score
+    model = torch.nn.DataParallel(model)
     optim = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
     init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)
     init_iter = iter
@@ -85,11 +84,11 @@ if __name__ == "__main__":
 
             """ 2. Train discriminator """
             fake_motion, _ = model.generate(GT_batch)
-            disc_real = model.discriminate(GT_batch[..., :-3])
-            disc_fake = model.discriminate(fake_motion.detach())
+            disc_real_short, disc_real_long = model.discriminate(GT_batch[..., :-3])
+            disc_fake_short, disc_fake_long = model.discriminate(fake_motion.detach())
 
-            loss_disc_real = -torch.mean(torch.log(disc_real + 1e-8))
-            loss_disc_fake = -torch.mean(torch.log(1 - disc_fake + 1e-8))
+            loss_disc_real = -(torch.mean(torch.log(disc_real_short + 1e-8)) + torch.mean(torch.log(disc_real_long + 1e-8)))
+            loss_disc_fake = -(torch.mean(torch.log(1 - disc_fake_short + 1e-8)) + torch.mean(torch.log(1 - disc_fake_long + 1e-8)))
             loss_disc = config.weight_adv * (loss_disc_real + loss_disc_fake)
 
             optim.zero_grad()
@@ -98,20 +97,16 @@ if __name__ == "__main__":
 
             """ 3. Train generator """
             pred_motion, pred_kf_score = model.generate(GT_batch)
-            disc_fake = model.discriminate(pred_motion)
+            disc_fake_short, disc_fake_long = model.discriminate(pred_motion)
             
             # GAN loss
-            loss_gen = config.weight_adv * (-torch.mean(torch.log(disc_fake + 1e-8)))
+            loss_gen = config.weight_adv * -(torch.mean(torch.log(disc_fake_short + 1e-8)) + torch.mean(torch.log(disc_fake_long + 1e-8)))
 
             # predicted keyframe features
             pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
 
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             _, pred_global_p = motionops.R6_fk(pred_local_R6.reshape(B, T, -1, 6), pred_root_p, skeleton)
-
-            pred_feet_v = pred_global_p[:, 1:, feet_ids] - pred_global_p[:, :-1, feet_ids]
-            pred_feet_v = torch.sum(pred_feet_v**2, dim=-1) # squared norm
-            pred_feet_v = torch.cat([pred_feet_v[:, 0:1], pred_feet_v], dim=1)
 
             # predicted trajectory
             pred_traj_xz = pred_root_p[..., (0, 2)]
@@ -125,7 +120,7 @@ if __name__ == "__main__":
             loss_score   = config.weight_score * torch.mean(torch.abs(pred_kf_score - GT_kf_score))
             loss_pose    = config.weight_pose  * (
                 torch.mean(torch.abs(pred_local_R6 - GT_local_R6) * GT_kf_score) +\
-                torch.mean(torch.abs(pred_global_p.reshape(B, T, -1) - GT_global_p.reshape(B, T, -1)) * GT_kf_score)
+                torch.mean(torch.abs(pred_global_p - GT_global_p).reshape(B, T, -1) * GT_kf_score)
             )
             loss_traj    = config.weight_traj  * torch.mean(torch.abs(pred_traj - GT_traj) * GT_kf_score)
             loss = loss_gen + loss_score + loss_pose + loss_traj
@@ -155,6 +150,51 @@ if __name__ == "__main__":
                 for k in loss_dict.keys():
                     loss_dict[k] = 0
             
+            if iter % config.val_interval == 0:
+                model.eval()
+                with torch.no_grad():
+                    val_loss_dict = {"pose": 0, "traj": 0, "score": 0, "total": 0}
+                    for GT_motion in tqdm(val_dataloader, desc="Validation"):
+                        GT_motion = GT_motion.to(device)
+                        GT_local_R6, GT_root_p, GT_kf_score, GT_traj = torch.split(GT_keyframe, [D-7, 3, 1, 3], dim=-1)
+                        GT_batch = torch.cat([GT_local_R6, GT_root_p, GT_traj], dim=-1) # exclude keyframe score
+                        GT_batch = (GT_batch - kf_mean) / kf_std
+
+                        # forward
+                        pred_motion, pred_kf_score = model.generate(GT_batch)
+                        pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3]
+                        
+                        # predicted motion
+                        pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
+                        _, pred_global_p = motionops.R6_fk(pred_local_R6.reshape(B, T, -1, 6), pred_root_p, skeleton)
+
+                        # predicted trajectory
+                        pred_traj_xz = pred_root_p[..., (0, 2)]
+                        pred_root_R = rotation.R6_to_R(pred_local_R6[:, :, :6])
+                        pred_traj_forward = F.normalize(torch.matmul(pred_root_R, v_forward) * torchconst.XZ(device), dim=-1)
+                        global_forward = torchconst.FORWARD(device).expand(B, T, -1)
+                        pred_signed_angle = mathops.signed_angle(global_forward, pred_traj_forward)
+                        pred_traj = torch.cat([pred_traj_xz, pred_signed_angle.unsqueeze(-1)], dim=-1)
+
+                        # loss
+                        loss_score   = torch.mean(torch.abs(pred_kf_score - GT_kf_score))
+                        loss_pose    = torch.mean(torch.abs(pred_local_R6 - GT_local_R6)) + torch.mean(torch.abs(pred_global_p - GT_global_p))
+                        loss_traj    = torch.mean(torch.abs(pred_traj - GT_traj) * GT_kf_score)
+                        loss = loss_score + loss_pose + loss_traj
+
+                        # log
+                        val_loss_dict["total"]   += loss.item()
+                        val_loss_dict["score"]   += loss_score.item()
+                        val_loss_dict["pose"]    += loss_pose.item()
+                        val_loss_dict["traj"]    += loss_traj.item()
+
+                    tqdm.write(f"Iter {iter} | Val Loss: {val_loss_dict['total'] / len(val_dataloader):.4f} | Val Score: {val_loss_dict['score'] / len(val_dataloader):.4f} | Val Pose: {val_loss_dict['pose'] / len(val_dataloader):.4f} | Val Traj: {val_loss_dict['traj'] / len(val_dataloader):.4f}")
+                    writer.add_scalar("val_loss/total", val_loss_dict["total"]  / len(val_dataloader), iter)
+                    writer.add_scalar("val_loss/score", val_loss_dict["score"]  / len(val_dataloader), iter)
+                    writer.add_scalar("val_loss/pose",  val_loss_dict["pose"]   / len(val_dataloader), iter)
+                    writer.add_scalar("val_loss/traj",  val_loss_dict["traj"]   / len(val_dataloader), iter)
+                model.train()
+
             if iter % config.save_interval == 0:
                 trainutil.save_ckpt(model, optim, epoch, iter, config)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
