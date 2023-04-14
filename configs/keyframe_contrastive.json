@@ -12,14 +12,16 @@
     "contact_joint_names": ["LeftFoot", "LeftToeBase", "RightFoot", "RightToeBase"],
     "contact_vel_threshold": 2e-4,
 
-    "log_dir": "log/RefineVAE",
+    "log_dir": "log/KeyframeContrastive",
     "log_interval": 100,
 
-    "save_dir": "save/RefineVAE",
+    "save_dir": "save/KeyframeContrastive",
     "save_interval": 10000,
 
+    "val_interval": 1000,
+
     "batch_size": 64,
-    "epochs": 1000,
+    "epochs": 2000,
     "warmup_iters": 8000,
     "min_transition": 5,
     "max_transition": 90,
@@ -29,11 +31,11 @@
     "n_heads": 8,
     "d_model": 512,
     "d_ff": 2048,
-    "pre_layernorm": true,
+    "pre_layernorm": false,
 
-    "weight_rot": 1.0,
-    "weight_pos": 1.0,
-    "weight_vel": 0.5,
+    "weight_score": 1.0,
+    "weight_pose": 1.0,
     "weight_traj": 0.5,
-    "weight_kl": 0.001
+    "weight_triplet": 0.1,
+    "margin": 0.2
 }
