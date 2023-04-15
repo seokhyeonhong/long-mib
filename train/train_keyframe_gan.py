@@ -20,7 +20,7 @@ from model.ours import KeyframeGAN
 from utility import trainutil
 
 if __name__ == "__main__":
-    # initial settings
+    # initial settings with all possible gpus
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = Config.load("configs/keyframe_gan.json")
     util.seed()
