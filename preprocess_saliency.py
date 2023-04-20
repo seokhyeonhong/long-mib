@@ -174,7 +174,7 @@ def generate_dataset(config, train=True):
     for idx, motion in tqdm(enumerate(dataset)):
         motion = motion[:config.context_frames+config.max_transition+1]
         T, D = motion.shape
-        local_R6, root_p, traj = torch.split(motion, [D-6, 3, 3], dim=-1)
+        local_R6, root_p = torch.split(motion, [D-3, 3], dim=-1)
 
         keyframes = keyframe_data[idx]
         prob = torch.zeros(T - config.context_frames + 1)
@@ -200,7 +200,7 @@ def generate_dataset(config, train=True):
         prob = torch.cat([torch.ones(config.context_frames-1), tier])
         prob = prob.unsqueeze(-1)
 
-        feature = torch.cat([local_R6, root_p, prob, traj], dim=-1).cpu().numpy()
+        feature = torch.cat([local_R6, root_p, prob], dim=-1).cpu().numpy()
         save_features.append(feature)
 
     save_features = np.stack(save_features, axis=0)
@@ -208,7 +208,7 @@ def generate_dataset(config, train=True):
     print(f"save_features.shape: {save_features.shape} saved to {config.keyframe_trainset_npy if train else config.keyframe_testset_npy}")
 
 def main():
-    config = Config.load("configs/traj_context.json")
+    config = Config.load("configs/dataset.json")
 
     # get_keyframes(config, train=True)
     generate_dataset(config, train=True)

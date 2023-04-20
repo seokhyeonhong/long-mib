@@ -40,9 +40,9 @@ class DatasetApp(MotionApp):
             self.copy_model.set_pose_by_source(self.motion.poses[self.prob_sorted_idx[i]])
             Render.model(self.copy_model).set_all_alphas(0.5).draw()
         
-        for frame in range(self.total_frames):
-            position = self.motion.poses[frame].root_p
-            self.sphere.set_position(position[0], 0, position[2]).draw()
+        # for frame in range(self.total_frames):
+        #     position = self.motion.poses[frame].root_p
+        #     self.sphere.set_position(position[0], 0, position[2]).draw()
     
     def render_text(self):
         super().render_text()
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     skeleton = dataset.skeleton
 
     for feature in dataloader:
-        feature = feature[:, :41]
+        # feature = feature[:, :41]
         B, T, D = feature.shape
 
         local_R6, root_p, traj = torch.split(feature, [D-6, 3, 3], dim=-1)

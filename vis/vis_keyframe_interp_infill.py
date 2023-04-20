@@ -20,7 +20,7 @@ from utility import testutil
 from utility.config import Config
 from utility.dataset import KeyframeDataset, MotionDataset
 from vis.visapp import ContextMotionApp
-from model.ours import KeyframeGAN, KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, RefineVAE, RefineGAN
+from model.ours import KeyframeGAN, KeyframeTransformer, InterpolationTransformerGlobal, InterpolationTransformerLocal, RefineGAN
 
 class KeyframeApp(MotionApp):
     def __init__(self, GT_motion, pred_motion, interp_motion, model, keyframes, time_per_motion, traj):
@@ -121,32 +121,33 @@ if __name__ == "__main__":
 
     kf_mean, kf_std = dataset.statistics(dim=(0, 1))
     kf_mean, kf_std = kf_mean.to(device), kf_std.to(device)
+
+    # exclude score from statistics
+    D = dataset.shape[-1]
+    mean_motion, _, mean_traj = torch.split(kf_mean, [D-4, 1, 3], dim=-1)
+    kf_mean = torch.cat([mean_motion, mean_traj], dim=-1)
+
+    std_motion, _, std_traj = torch.split(kf_std, [D-4, 1, 3], dim=-1)
+    kf_std = torch.cat([std_motion, std_traj], dim=-1)
     
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
     # model
     print("Initializing model...")
-    model = KeyframeGAN(dataset.shape[-1], config).to(device) # exclude trajectory
+    model = KeyframeGAN(dataset.shape[-1] - 4, config).to(device) # exclude trajectory and keyframe score
     testutil.load_model(model, config)
     model.eval()
 
-    # interp_config = Config.load("configs/refine_gan.json")
-    # interp = RefineGAN(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
-    # testutil.load_model(interp, interp_config)
-    # interp.eval()
+    interp_config = Config.load("configs/interp_local.json")
+    interp = InterpolationTransformerLocal(dataset.shape[-1] - 1, interp_config).to(device) # exclude prob
+    testutil.load_model(interp, interp_config)
+    interp.eval()
 
-    # motion_mean, motion_std = MotionDataset(train=False, config=interp_config).statistics(dim=(0, 1))
-    # motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
+    motion_mean, motion_std = MotionDataset(train=False, config=interp_config).statistics(dim=(0, 1))
+    motion_mean, motion_std = motion_mean.to(device), motion_std.to(device)
 
     # character
     ybot = FBX("dataset/ybot.fbx")
-
-    # toe_jids = [17, 21]
-    # # toe_jids = [9, 13, 17, 21]
-    # toe_fids = []
-    # for jid in toe_jids:
-    #     for i in range(6):
-    #         toe_fids.append(6*jid + i)
 
     # training loop
     with torch.no_grad():
@@ -174,14 +175,14 @@ if __name__ == "__main__":
 
             # forward
             GT_local_R6 = rotation.R_to_R6(GT_local_R).reshape(B, T, -1)
-            GT_motion = torch.cat([GT_local_R6, GT_root_p, GT_kf_prob, GT_traj], dim=-1)
+            GT_motion = torch.cat([GT_local_R6, GT_root_p, GT_traj], dim=-1)
             batch = (GT_motion - kf_mean) / kf_std
-            pred_motion = model.forward(batch)
+            pred_motion, pred_kf_score = model.generate(batch)
             pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
             pred_motion[:, :config.context_frames] = GT_motion[:, :config.context_frames, :-3] # restore context frames
             pred_motion[:, -1] = GT_motion[:, -1, :-3] # restore last frame
 
-            pred_local_R6, pred_root_p, pred_kf_prob = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
+            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             pred_local_R6 = rotation.R_to_R6(rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))).reshape(B, T, -1)
 
             # for each batch
@@ -198,7 +199,7 @@ if __name__ == "__main__":
                         keyframes.append(T-1)
                         break
 
-                    top_keyframe = torch.topk(pred_kf_prob[b:b+1, transition_start+5:transition_end+1], 1, dim=1).indices + transition_start+5
+                    top_keyframe = torch.topk(pred_kf_score[b:b+1, transition_start+5:transition_end+1], 1, dim=1).indices + transition_start+5
                     top_keyframe = top_keyframe.item()
                     keyframes.append(top_keyframe)
                     transition_start = top_keyframe + 1
@@ -219,23 +220,24 @@ if __name__ == "__main__":
                 motion_batch = torch.cat([motion_batch, GT_traj[b:b+1]], dim=-1)
 
                 # refine
-                # motion_batch = (motion_batch - motion_mean) / motion_std
+                motion_batch = (motion_batch - motion_mean) / motion_std
+                pred = interp.forward(motion_batch, keyframes)
                 # pred = interp.generate(motion_batch, keyframes)
                 # pred = interp.sample(motion_batch, keyframes)
                 
                 results.append(pred.clone())
-                # interps.append(motion_batch[..., :-3].clone())
+                interps.append(motion_batch[..., :-3].clone())
             
             # concatenate
-            # pred_motion = torch.cat(results, dim=0)
-            # pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
-            # pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
-            # pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
+            pred_motion = torch.cat(results, dim=0)
+            pred_motion = pred_motion * motion_std[:-3] + motion_mean[:-3]
+            pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
+            pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
 
-            # interp_motion = torch.cat(interps, dim=0)
-            # interp_motion = interp_motion * motion_std[:-3] + motion_mean[:-3]
-            # interp_local_R6, interp_root_p = torch.split(interp_motion, [D-7, 3], dim=-1)
-            # interp_local_R = rotation.R6_to_R(interp_local_R6.reshape(B, T, -1, 6))
+            interp_motion = torch.cat(interps, dim=0)
+            interp_motion = interp_motion * motion_std[:-3] + motion_mean[:-3]
+            interp_local_R6, interp_root_p = torch.split(interp_motion, [D-7, 3], dim=-1)
+            interp_local_R = rotation.R6_to_R(interp_local_R6.reshape(B, T, -1, 6))
 
             # animation
             GT_local_R = GT_local_R.reshape(B*T, -1, 3, 3)
@@ -252,9 +254,7 @@ if __name__ == "__main__":
 
             app_manager = AppManager()
             GT_kf_prob = GT_kf_prob.reshape(B*T, -1)
-            pred_kf_prob = pred_kf_prob.reshape(B*T, -1)
+            pred_kf_score = pred_kf_score.reshape(B*T, -1)
 
-            for kf in total_keyframes:
-                print(kf)
             app = KeyframeApp(GT_motion, pred_motion, interp_motion, ybot.model(), total_keyframes, T, GT_traj.reshape(B*T, -1).cpu().numpy())
             app_manager.run(app)

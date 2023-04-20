@@ -20,16 +20,32 @@ class SingleMotionApp(MotionApp):
         if self.show_many:
             if self.show_transition:
                 ith_motion = self.frame // self.frames_per_motion
-                for i in range(0, self.frames_per_motion, 3):
-                    if i < 10:
-                        self.model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
-                        Render.model(self.model).draw()
-                    else:
-                        self.copy_model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
-                        Render.model(self.copy_model).set_albedo_of(glm.vec3(0.5), 0).draw()
-
+                for i in range(0, 10, 3):
+                    self.model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                    Render.model(self.model).draw()
                 self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
                 Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 31])
+                Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 61])
+                Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 91])
+                Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 121])
+                Render.model(self.model).draw()
+                self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 151])
+                Render.model(self.model).draw()
+                # ith_motion = self.frame // self.frames_per_motion
+                # for i in range(0, self.frames_per_motion, 3):
+                #     if i < 10:
+                #         self.model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                #         Render.model(self.model).draw()
+                #     else:
+                #         self.copy_model.set_pose_by_source(self.motion.poses[ith_motion*self.frames_per_motion + i])
+                #         Render.model(self.copy_model).set_albedo_of(glm.vec3(0.5), 0).draw()
+
+                # self.model.set_pose_by_source(self.motion.poses[(ith_motion+1)*self.frames_per_motion - 1])
+                # Render.model(self.model).draw()
             else:
                 ith_motion = self.frame // self.frames_per_motion
                 for i in range(0, 10, 3):
@@ -42,8 +58,8 @@ class SingleMotionApp(MotionApp):
             Render.model(self.model).draw()
         
         ith_motion = self.frame // self.frames_per_motion
-        for i in range(ith_motion*self.frames_per_motion, (ith_motion+1)*self.frames_per_motion):
-            self.sphere.set_position(self.motion.poses[i].root_p[0], 0, self.motion.poses[i].root_p[2]).draw()
+        # for i in range(ith_motion*self.frames_per_motion, (ith_motion+1)*self.frames_per_motion):
+        #     self.sphere.set_position(self.motion.poses[i].root_p[0], 0, self.motion.poses[i].root_p[2]).draw()
 
     def render_text(self):
         super().render_text()

@@ -67,18 +67,12 @@ def get_features_parallel(windows):
     return features
 
 def get_features(window):
-    local_R = np.stack([pose.local_R for pose in window.poses], axis=0)
-    root_p  = np.stack([pose.root_p for pose in window.poses], axis=0)
-
-    # trajectory features
-    xz      = root_p[..., (0, 2)]
-    forward = np.stack([pose.forward for pose in window.poses], axis=0)
-    global_z = np.array([0, 0, 1], dtype=np.float32)[None, :].repeat(len(window), axis=0)
-    signed_angle = mathops.signed_angle(global_z, forward)[:, None]
+    local_R  = np.stack([pose.local_R for pose in window.poses], axis=0)
+    root_p   = np.stack([pose.root_p for pose in window.poses], axis=0)
 
     local_R6 = rotation.R_to_R6(local_R).reshape(len(window), -1)
     root_p   = root_p.reshape(len(window), -1)
-    feature = np.concatenate([local_R6, root_p, xz, signed_angle], axis=-1).astype(np.float32)
+    feature  = np.concatenate([local_R6, root_p], axis=-1).astype(np.float32)
 
     return feature
 
@@ -92,7 +86,7 @@ def save_features(features, npy_path):
     np.save(npy_path, features)
 
 def main():
-    config = Config.load("configs/context.json")
+    config = Config.load("configs/dataset.json")
     train_motions, test_motions = load_motions(config)
 
     # feature extraction

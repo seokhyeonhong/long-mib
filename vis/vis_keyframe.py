@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import copy
-import glm
+import glm, glfw
 from tqdm import tqdm
 
 from pymovis.utils import util
@@ -30,6 +30,9 @@ class KeyframeApp(MotionApp):
         self.GT_prob = GT_prob
         self.pred_prob = pred_prob
 
+        self.show_GT = True
+        self.show_pred = True
+
         self.time_per_motion = time_per_motion
 
         self.GT_model = model
@@ -41,16 +44,23 @@ class KeyframeApp(MotionApp):
     def render(self):
         super().render(render_model=False)
 
-        self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
-        Render.model(self.GT_model).draw()
-        # Render.model(self.GT_model).set_all_alphas(self.GT_prob[self.frame]).draw()
-
-        self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
-        Render.model(self.pred_model).draw()
+        if self.show_GT:
+            self.GT_model.set_pose_by_source(self.GT_motion.poses[self.frame])
+            Render.model(self.GT_model).draw()
+            # Render.model(self.GT_model).set_all_alphas(self.GT_prob[self.frame]).draw()
+        if self.show_pred:
+            self.pred_model.set_pose_by_source(self.pred_motion.poses[self.frame])
+            Render.model(self.pred_model).draw()
 
     def render_text(self):
         super().render_text()
-        Render.text_on_screen()
+    
+    def key_callback(self, window, key, scancode, action, mods):
+        super().key_callback(window, key, scancode, action, mods)
+        if key == glfw.KEY_Q and action == glfw.PRESS:
+            self.show_GT = not self.show_GT
+        if key == glfw.KEY_W and action == glfw.PRESS:
+            self.show_pred = not self.show_pred
 
 if __name__ == "__main__":
     # initial settings
@@ -95,13 +105,28 @@ if __name__ == "__main__":
             GT_local_R6, GT_root_p, GT_kf_score, GT_traj = torch.split(GT_keyframe, [D-7, 3, 1, 3], dim=-1)
             GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
-            GT_batch = torch.cat([GT_local_R6, GT_root_p, GT_traj], dim=-1) # exclude keyframe score
-            GT_batch = (GT_batch - kf_mean) / kf_std
+            """ 1-1. Modify Trajectory """
+            traj_from = GT_traj[:, config.context_frames-1, -3:].unsqueeze(1)
+            traj_to   = GT_traj[:, -1, -3:].unsqueeze(1)
+            t = torch.linspace(0, 1, T - config.context_frames + 1)[:, None].to(device)
+            GT_traj[:, config.context_frames-1:, -3:] = traj_from + (traj_to - traj_from) * t
+            GT_traj[:, config.context_frames:, -3] = torch.linspace(0, torch.pi, T - config.context_frames)[None, :].to(device)
+            GT_traj[:, config.context_frames:, -2] = torch.sin(GT_traj[:, config.context_frames:, -3])
+            GT_traj[:, config.context_frames:, -1] = GT_traj[:, config.context_frames-1, -1].unsqueeze(1).clone()
+
+            GT_root_p[:, -1, (0, 2)] = GT_traj[:, -1, (-3, -2)]
+            GT_local_R[:, -1, 0] = GT_local_R[:, config.context_frames-1, 0]
 
             """ 2. Generate """
+            GT_keyframe = torch.cat([GT_local_R6, GT_root_p, GT_traj], dim=-1) # exclude keyframe score
+            # GT_keyframe = torch.cat([GT_local_R6, GT_root_p, GT_kf_score, GT_traj], dim=-1) # exclude keyframe score
+            GT_batch = (GT_keyframe - kf_mean) / kf_std
+
+            # pred_motion = model.forward(GT_batch)
             pred_motion, pred_kf_score = model.generate(GT_batch)
             pred_motion = pred_motion * kf_std[..., :-3] + kf_mean[..., :-3] # exclude traj features
 
+            # pred_local_R6, pred_root_p, pred_kf_score = torch.split(pred_motion, [D-7, 3, 1], dim=-1)
             pred_local_R6, pred_root_p = torch.split(pred_motion, [D-7, 3], dim=-1)
             pred_local_R = rotation.R6_to_R(pred_local_R6.reshape(B, T, -1, 6))
             
