@@ -48,3 +48,7 @@ def get_noam_scheduler(config, optim):
             return (iter ** (-0.5))
     
     return torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=_lr_lambda)
+
+def write_log(writer, loss_dict, interval, iter, train=True):
+    for key, value in loss_dict.items():
+        writer.add_scalar(f"{'train' if train else 'val'}/{key}", value / interval, iter)
