@@ -70,8 +70,8 @@ class Encoder(nn.Module):
             raise ValueError(f"d_model must be divisible by num_heads, but d_model={self.d_model} and num_heads={self.n_heads}")
 
         # input token for mean and logvar of VAE
-        self.mean_token = nn.Parameter(torch.randn(1, 1, self.d_model))
-        self.logvar_token = nn.Parameter(torch.randn(1, 1, self.d_model))
+        self.mean_token = nn.Parameter(torch.zeros(1, 1, self.d_model), requires_grad=False)
+        self.logvar_token = nn.Parameter(torch.zeros(1, 1, self.d_model), requires_grad=False)
 
         # encoders
         self.conv = nn.Sequential(
