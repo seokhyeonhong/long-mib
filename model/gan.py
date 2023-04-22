@@ -120,7 +120,10 @@ class Generator(nn.Module):
         atten_bias = self.get_bias(T, device=motion.device)
 
         """ 2. Motion encoder """
-        x = torch.cat([motion*batch_mask, traj, batch_mask], dim=-1)
+        if self.is_context:
+            x = torch.cat([motion*batch_mask, traj, batch_mask], dim=-1)
+        else:
+            x = torch.cat([motion, traj, batch_mask], dim=-1)
         x = self.motion_encoder(x)
 
         """ 3. Add random noise """
