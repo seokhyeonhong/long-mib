@@ -25,8 +25,8 @@ class TwoStageGAN(nn.Module):
         self.G_ctx = Generator(d_motion, config, is_context=True)
         self.G_det = Generator(d_motion, config, is_context=False)
 
-        self.D_ctx = Discriminator(d_motion, config)
-        self.D_det = Discriminator(d_motion, config)
+        self.D_ctx = PatchDiscriminator(d_motion, config)
+        self.D_det = PatchDiscriminator(d_motion, config)
 
     def generate(self, motion, traj):
         ctx_motion = self.G_ctx.forward(motion, traj)
@@ -105,18 +105,34 @@ class Generator(nn.Module):
         batch_mask = torch.ones(B, T, 1, dtype=batch.dtype, device=batch.device)
         batch_mask[:, self.config.context_frames:-1, :] = 0
 
-        # True for unknown frames, False for known frames
-        atten_mask = torch.zeros(T, T, dtype=torch.bool, device=batch.device)
-        atten_mask[:, self.config.context_frames:-1] = True
+        # True for known frames, False for unknown frames
+        constrained_frames = torch.ones(T, dtype=torch.bool, device=batch.device)
+        constrained_frames[self.config.context_frames:-1] = False
 
-        return batch_mask, atten_mask
+        return batch_mask, constrained_frames
+    
+    def get_atten_mask(self, constrained_frames, dist_threshold):
+        T = len(constrained_frames)
 
+        frame_from = torch.arange(T, device=constrained_frames.device).view(T, 1)
+        frame_to   = torch.arange(T, device=constrained_frames.device).view(1, T)
+        attn_mask  = torch.abs(frame_to - frame_from) > dist_threshold
+        attn_mask[:, ~constrained_frames] = True
+
+        return attn_mask
+
+    def get_noise_weight(self, length):
+        t0 = torch.arange(0, length,  1, dtype=torch.float32) - (self.config.context_frames-1)
+        t1 = torch.arange(length, 0, -1, dtype=torch.float32) - 1
+        t  = torch.clip(torch.min(t0, t1) / self.config.fps, 0, 1)
+        return t
+    
     def forward(self, motion, traj):
         B, T, D = motion.shape
 
         """ 1. Get mask and bias """
         original_motion = motion.clone()
-        batch_mask, atten_mask = self.get_mask(motion)
+        batch_mask, constrained_frames = self.get_mask(motion)
         atten_bias = self.get_bias(T, device=motion.device)
 
         """ 2. Motion encoder """
@@ -126,24 +142,31 @@ class Generator(nn.Module):
             x = torch.cat([motion, traj, batch_mask], dim=-1)
         x = self.motion_encoder(x)
 
-        """ 3. Add random noise """
-        if self.is_context:
-            z = torch.randn(B, T, self.d_model, device=x.device, dtype=x.dtype)
-            x = x + z
-
-        """ 4. Add positional embedding """
+        """ 3. Add positional embedding """
         pos = torch.arange(T, device=x.device, dtype=x.dtype)
         x = x + self.embedding(pos)
         
-        """ 5. Transformer layers """
-        for i in range(self.n_layers):
-            x = self.attn_layers[i](x, x, atten_bias, mask=atten_mask if self.is_context else None)
-            x = self.pffn_layers[i](x)
+        """ 4. Transformer layers """
+        if self.is_context:
+            conv_kernel = torch.ones(11, device=constrained_frames.device, dtype=torch.float).view(1, 1, 11)
+            for i in range(self.n_layers):
+                atten_mask = self.get_atten_mask(constrained_frames, 5)
+                x = self.attn_layers[i](x, x, atten_bias, mask=atten_mask)
+                x = self.pffn_layers[i](x)
+                constrained_frames = F.conv1d(constrained_frames.float().view(1, 1, T), conv_kernel, padding=5).view(T).bool()
+        else:
+            for i in range(self.n_layers):
+                x = self.attn_layers[i](x, x, atten_bias)
+                x = self.pffn_layers[i](x)
         
-        """ 6. Output layer """
+        """ 6. Layer norm """
         if self.pre_layernorm:
             x = self.layer_norm(x)
 
+        """ 7. Add noise """
+        if self.is_context:
+            z = torch.randn(B, T, self.d_model, device=x.device, dtype=x.dtype)
+            x = x + z * self.get_noise_weight(T).view(1, T, 1).to(x.device)
         x = self.output_layer(x)
 
         """ 7. Final output """
@@ -204,7 +227,6 @@ class Discriminator(nn.Module):
         long_score = self.long_discriminator(motion.transpose(1, 2)).squeeze(-1)
         
         return short_score, long_score
-
 
 class KeyframeGAN(nn.Module):
     def __init__(self, d_motion, config):
@@ -279,24 +301,25 @@ class KeyframeGenerator(nn.Module):
         bias       = -(torch.abs(frame_to - frame_from) // self.period).float()
         return bias
     
-    def get_mask(self, batch):
+    def get_batch_mask(self, batch):
         B, T, D = batch.shape
 
         # 0 for unknown frames, 1 for known frames
         batch_mask = torch.ones(B, T, 1, dtype=batch.dtype, device=batch.device)
         batch_mask[:, self.config.context_frames:-1, :] = 0
 
-        # True for unknown frames, False for known frames
-        atten_mask = torch.zeros(T, T, dtype=torch.bool, device=batch.device)
-        atten_mask[:, self.config.context_frames:-1] = True
-
-        return batch_mask, atten_mask
+        return batch_mask
     
-    def get_noise_weight(self, length):
-        t0 = torch.arange(0, length,  1, dtype=torch.float32) - (self.config.context_frames-1)
-        t1 = torch.arange(length, 0, -1, dtype=torch.float32) - 1
-        t  = torch.clip(torch.min(t0, t1) / self.config.fps, 0, 1)
-        return t
+    def get_attn_mask(self, batch):
+        # True for unknown frames, False for known frames
+        frame_from = torch.arange(T, device=batch.device).view(T, 1)
+        frame_to   = torch.arange(T, device=batch.device).view(1, T)
+        frame_dist = torch.abs(frame_to - frame_from)
+        atten_mask = (frame_dist > self.config.context_frames)
+        import pdb
+        atten_mask[:, self.config.context_frames:-1] = True
+        breakpoint()
+
         
 
     def forward(self, motion, traj):

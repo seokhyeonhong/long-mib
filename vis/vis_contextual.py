@@ -17,13 +17,13 @@ from pymovis.ops import rotation, motionops
 from utility import utils
 from utility.config import Config
 from utility.dataset import MotionDataset
-from vis.visapp import DetailMotionApp
-from model.gan import TwoStageGAN
+from vis.visapp import ContextMotionApp
+from model.contextual import ContextualTransformer
 
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/twostagegan.json")
+    config = Config.load("configs/contextual.json")
     util.seed()
 
     # dataset
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = TwoStageGAN(dataset.shape[-1], config).to(device)
+    model = ContextualTransformer(dataset.shape[-1], config, is_context=True).to(device)
     utils.load_model(model, config)
     model.eval()
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
             """ 1. Max transition length """
-            T = config.context_frames + 60 + 1
+            T = config.context_frames + config.max_transition*2 + 1
             GT_motion = GT_motion[:, :T, :].to(device)
             B, T, D = GT_motion.shape
 
@@ -61,29 +61,22 @@ if __name__ == "__main__":
             # GT_traj = utils.get_interpolated_trajectory(GT_traj, config.context_frames)
 
             """ 4. Generate """
-            # forward
+            # normalize - forward - denormalize
             GT_batch = (GT_motion - motion_mean) / motion_std
-            ctx_motion, det_motion, det_contact = model.generate(GT_batch, GT_traj)
-
-            # predicted motion features
+            ctx_motion, _ = model.forward(GT_batch, GT_traj)
             ctx_motion = ctx_motion * motion_std + motion_mean
-            det_motion = det_motion * motion_std + motion_mean
 
             ctx_local_R6, ctx_global_p, ctx_traj = utils.get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
-            det_local_R6, det_global_p, det_traj = utils.get_motion_and_trajectory(det_motion, skeleton, v_forward)
 
             # animation
             GT_local_R = rotation.R6_to_R(GT_local_R6).reshape(B*T, -1, 3, 3)
             GT_root_p = GT_global_p[:, :, 0, :].reshape(B*T, -1)
             ctx_local_R = rotation.R6_to_R(ctx_local_R6).reshape(B*T, -1, 3, 3)
             ctx_root_p = ctx_global_p[:, :, 0, :].reshape(B*T, -1)
-            det_local_R = rotation.R6_to_R(det_local_R6).reshape(B*T, -1, 3, 3)
-            det_root_p = det_global_p[:, :, 0, :].reshape(B*T, -1)
 
             GT_motion = Motion.from_torch(skeleton, GT_local_R, GT_root_p)
             ctx_motion = Motion.from_torch(skeleton, ctx_local_R, ctx_root_p)
-            det_motion = Motion.from_torch(skeleton, det_local_R, det_root_p)
 
             app_manager = AppManager()
-            app = DetailMotionApp(GT_motion, ctx_motion, det_motion, ybot.model(), T)
+            app = ContextMotionApp(GT_motion, ctx_motion, ybot.model(), T)
             app_manager.run(app)

@@ -17,8 +17,7 @@ from pymovis.ops import motionops, rotation, mathops
 from utility.dataset import MotionDataset
 from utility.config import Config
 from model.gan import TwoStageGAN
-from utility import trainutil, loss
-
+from utility import utils
 
 if __name__ == "__main__":
     # initial settings
@@ -47,7 +46,7 @@ if __name__ == "__main__":
     print("Initializing model...")
     model = TwoStageGAN(dataset.shape[-1], config).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98), eps=1e-9)
-    init_epoch, iter = trainutil.load_latest_ckpt(model, optim, config)
+    init_epoch, iter = utils.load_latest_ckpt(model, optim, config)
     init_iter = iter
 
     # save and log
@@ -87,8 +86,8 @@ if __name__ == "__main__":
             B, T, D = GT_motion.shape
 
             """ 2. GT motion data """
-            GT_local_R6, GT_global_p, GT_traj = get_motion_and_trajectory(GT_motion, skeleton, v_forward)
-            GT_feet_v, GT_contact = get_velocity_and_contact(GT_global_p, feet_ids, config.contact_vel_threshold)
+            GT_local_R6, GT_global_p, GT_traj = utils.get_motion_and_trajectory(GT_motion, skeleton, v_forward)
+            GT_feet_v, GT_contact = utils.get_velocity_and_contact(GT_global_p, feet_ids, config.contact_vel_threshold)
 
             """ 3. Train discriminator """
             # normalize and generate
@@ -100,8 +99,8 @@ if __name__ == "__main__":
             fake_ctx_short, fake_ctx_long, fake_det_short, fake_det_long = model.discriminate(ctx_motion.detach(), det_motion.detach())
 
             # loss
-            loss_ctx = config.weight_adv * (loss.discriminator_loss(real_ctx_short, fake_ctx_short) + loss.discriminator_loss(real_ctx_long, fake_ctx_long))
-            loss_det = config.weight_adv * (loss.discriminator_loss(real_det_short, fake_det_short) + loss.discriminator_loss(real_det_long, fake_det_long))
+            loss_ctx = config.weight_adv * (utils.discriminator_loss(real_ctx_short, fake_ctx_short) + utils.discriminator_loss(real_ctx_long, fake_ctx_long))
+            loss_det = config.weight_adv * (utils.discriminator_loss(real_det_short, fake_det_short) + utils.discriminator_loss(real_det_long, fake_det_long))
             loss_disc = loss_ctx + loss_det
             
             # backward
@@ -124,27 +123,27 @@ if __name__ == "__main__":
             fake_ctx_short, fake_ctx_long, fake_det_short, fake_det_long = model.discriminate(ctx_motion, det_motion)
 
             # adversarial loss
-            loss_ctx_gen = config.weight_adv * (loss.generator_loss(fake_ctx_short) + loss.generator_loss(fake_ctx_long))
-            loss_det_gen = config.weight_adv * (loss.generator_loss(fake_det_short) + loss.generator_loss(fake_det_long))
+            loss_ctx_gen = config.weight_adv * (utils.generator_loss(fake_ctx_short) + utils.generator_loss(fake_ctx_long))
+            loss_det_gen = config.weight_adv * (utils.generator_loss(fake_det_short) + utils.generator_loss(fake_det_long))
 
             # predicted motion features
             ctx_motion = ctx_motion * motion_std + motion_mean
             det_motion = det_motion * motion_std + motion_mean
 
-            ctx_local_R6, ctx_global_p, ctx_traj = get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
-            det_local_R6, det_global_p, det_traj = get_motion_and_trajectory(det_motion, skeleton, v_forward)
-            det_feet_v, _ = get_velocity_and_contact(det_global_p, feet_ids, config.contact_vel_threshold)
+            ctx_local_R6, ctx_global_p, ctx_traj = utils.get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
+            det_local_R6, det_global_p, det_traj = utils.get_motion_and_trajectory(det_motion, skeleton, v_forward)
+            det_feet_v, _ = utils.get_velocity_and_contact(det_global_p, feet_ids, config.contact_vel_threshold)
 
             # loss
-            loss_ctx_pose = config.weight_ctx_pose * (loss.recon_loss(ctx_local_R6, GT_local_R6) + loss.recon_loss(ctx_global_p, GT_global_p))
-            loss_ctx_traj = config.weight_ctx_traj * loss.traj_loss(ctx_traj, GT_traj)
-            loss_ctx_smooth = config.weight_ctx_smooth * (loss.smooth_loss(ctx_local_R6) + loss.smooth_loss(ctx_global_p))
+            loss_ctx_pose = config.weight_ctx_pose * (utils.recon_loss(ctx_local_R6, GT_local_R6) + utils.recon_loss(ctx_global_p, GT_global_p))
+            loss_ctx_traj = config.weight_ctx_traj * utils.traj_loss(ctx_traj, GT_traj)
+            loss_ctx_smooth = config.weight_ctx_smooth * (utils.smooth_loss(ctx_local_R6) + utils.smooth_loss(ctx_global_p))
             loss_ctx = loss_ctx_gen + loss_ctx_pose + loss_ctx_traj + loss_ctx_smooth
 
-            loss_det_pose = config.weight_det_pose * (loss.recon_loss(det_local_R6, GT_local_R6) + loss.recon_loss(det_global_p, GT_global_p))
-            loss_det_traj = config.weight_det_traj * loss.traj_loss(det_traj, GT_traj)
-            loss_det_contact = config.weight_det_contact * loss.recon_loss(det_contact, GT_contact)
-            loss_det_foot = config.weight_det_foot * loss.foot_loss(det_feet_v, det_contact.detach())
+            loss_det_pose = config.weight_det_pose * (utils.recon_loss(det_local_R6, GT_local_R6) + utils.recon_loss(det_global_p, GT_global_p))
+            loss_det_traj = config.weight_det_traj * utils.traj_loss(det_traj, GT_traj)
+            loss_det_contact = config.weight_det_contact * utils.recon_loss(det_contact, GT_contact)
+            loss_det_foot = config.weight_det_foot * utils.foot_loss(det_feet_v, det_contact.detach())
             loss_det = loss_det_gen + loss_det_pose + loss_det_traj + loss_det_contact + loss_det_foot
 
             loss_total = loss_ctx + loss_det
@@ -172,12 +171,8 @@ if __name__ == "__main__":
 
             """ 5. Log """
             if iter % config.log_interval == 0:
-                tqdm.write(f"Iter {iter} | Total: {(loss_dict['total'] / config.log_interval):.4f} | Context: {(loss_dict['ctx'] / config.log_interval):.4f} | Detail: {(loss_dict['det'] / config.log_interval):.4f}")
-                trainutil.write_log(writer, loss_dict, config.log_interval, iter, train=True)
-
-                # reset loss dict
-                for k in loss_dict.keys():
-                    loss_dict[k] = 0
+                utils.write_log(writer, loss_dict, config.log_interval, iter, train=True)
+                utils.reset_log(loss_dict)
             
             """ 6. Validation """
             if iter % config.val_interval == 0:
@@ -204,8 +199,8 @@ if __name__ == "__main__":
                         B, T, D = GT_motion.shape
 
                         """ 6-2. GT motion data """
-                        GT_local_R6, GT_global_p, GT_traj = get_motion_and_trajectory(GT_motion, skeleton, v_forward)
-                        GT_feet_v, GT_contact = get_velocity_and_contact(GT_global_p, feet_ids, config.contact_vel_threshold)
+                        GT_local_R6, GT_global_p, GT_traj = utils.get_motion_and_trajectory(GT_motion, skeleton, v_forward)
+                        GT_feet_v, GT_contact = utils.get_velocity_and_contact(GT_global_p, feet_ids, config.contact_vel_threshold)
 
                         """ 6-3. Forward """
                         # generate motion
@@ -216,22 +211,22 @@ if __name__ == "__main__":
                         det_motion = det_motion * motion_std + motion_mean
 
                         # predicted motion
-                        ctx_local_R6, ctx_global_p, ctx_traj = get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
-                        det_local_R6, det_global_p, det_traj = get_motion_and_trajectory(det_motion, skeleton, v_forward)
-                        det_feet_v, _ = get_velocity_and_contact(det_global_p, feet_ids, config.contact_vel_threshold)
+                        ctx_local_R6, ctx_global_p, ctx_traj = utils.get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
+                        det_local_R6, det_global_p, det_traj = utils.get_motion_and_trajectory(det_motion, skeleton, v_forward)
+                        det_feet_v, _ = utils.get_velocity_and_contact(det_global_p, feet_ids, config.contact_vel_threshold)
 
                         """ 6-4. Loss """
                         # ContextNet
-                        loss_ctx_pose   = config.weight_ctx_pose * (loss.recon_loss(ctx_local_R6, GT_local_R6) + loss.recon_loss(ctx_global_p, GT_global_p))
-                        loss_ctx_traj   = config.weight_ctx_traj * loss.traj_loss(ctx_traj, GT_traj)
-                        loss_ctx_smooth = config.weight_ctx_smooth * (loss.smooth_loss(ctx_local_R6) + loss.smooth_loss(ctx_global_p))
+                        loss_ctx_pose   = config.weight_ctx_pose * (utils.recon_loss(ctx_local_R6, GT_local_R6) + utils.recon_loss(ctx_global_p, GT_global_p))
+                        loss_ctx_traj   = config.weight_ctx_traj * utils.traj_loss(ctx_traj, GT_traj)
+                        loss_ctx_smooth = config.weight_ctx_smooth * (utils.smooth_loss(ctx_local_R6) + utils.smooth_loss(ctx_global_p))
                         loss_ctx        = loss_ctx_pose + loss_ctx_traj + loss_ctx_smooth
 
                         # DetailNet
-                        loss_det_pose    = config.weight_det_pose * (loss.recon_loss(det_local_R6, GT_local_R6) + loss.recon_loss(det_global_p, GT_global_p))
-                        loss_det_traj    = config.weight_det_traj * loss.traj_loss(det_traj, GT_traj)
-                        loss_det_contact = config.weight_det_contact * loss.recon_loss(det_contact, GT_contact)
-                        loss_det_foot    = config.weight_det_foot * loss.foot_loss(det_feet_v, det_contact.detach())
+                        loss_det_pose    = config.weight_det_pose * (utils.recon_loss(det_local_R6, GT_local_R6) + utils.recon_loss(det_global_p, GT_global_p))
+                        loss_det_traj    = config.weight_det_traj * utils.traj_loss(det_traj, GT_traj)
+                        loss_det_contact = config.weight_det_contact * utils.recon_loss(det_contact, GT_contact)
+                        loss_det_foot    = config.weight_det_foot * utils.foot_loss(det_feet_v, det_contact.detach())
                         loss_det         = loss_det_pose + loss_det_traj + loss_det_contact + loss_det_foot
 
                         # total loss
@@ -251,24 +246,20 @@ if __name__ == "__main__":
                         val_loss_dict["det/contact"] += loss_det_contact.item()
                         val_loss_dict["det/foot"]    += loss_det_foot.item()
 
-                # average
-                for k in val_loss_dict.keys():
-                    val_loss_dict[k] /= len(val_dataloader)
-                
                 # write and print log
-                trainutil.write_log(writer, val_loss_dict, 1, iter, train=False)
-                tqdm.write(f"Validation at Iter {iter} | Total: {val_loss_dict['total']:.4f} | Context: {val_loss_dict['ctx']:.4f} | Detail: {val_loss_dict['det']:.4f}")
+                utils.write_log(writer, val_loss_dict, len(val_dataloader), iter, train=False)
+                utils.reset_log(val_loss_dict)
 
                 # train mode
                 model.train()
 
             """ 8. Save checkpoint """
             if iter % config.save_interval == 0:
-                trainutil.save_ckpt(model, optim, epoch, iter, config)
+                utils.save_ckpt(model, optim, epoch, iter, config)
                 tqdm.write(f"Saved checkpoint at iter {iter}")
             
             # update iter
             iter += 1
     
     print(f"Training finished in {time.perf_counter() - start_time:.2f} seconds")
-    trainutil.save_ckpt(model, optim, epoch, iter, config)
+    utils.save_ckpt(model, optim, epoch, iter, config)
