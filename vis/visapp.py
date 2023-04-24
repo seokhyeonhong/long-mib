@@ -160,15 +160,15 @@ class DetailMotionApp(MotionApp):
         ith_motion = self.frame // self.frames_per_motion
         ith_frame = self.frame % self.frames_per_motion
 
-        # if self.show_GT:
-        #     self.motion = self.GT_motion
-        #     self.model = self.GT_model
-        #     super().render(render_xray=self.show_skeleton)
+        if self.show_GT:
+            self.motion = self.GT_motion
+            self.model = self.GT_model
+            super().render(render_xray=self.show_skeleton)
 
-        # if self.show_context:
-        #     self.motion = self.context_motion
-        #     self.model = self.context_model
-        #     super().render(render_xray=self.show_skeleton)
+        if self.show_context:
+            self.motion = self.context_motion
+            self.model = self.context_model
+            super().render(render_xray=self.show_skeleton)
 
         if self.show_detail:
             self.motion = self.detail_motion

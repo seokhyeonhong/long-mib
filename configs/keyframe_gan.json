@@ -31,7 +31,7 @@
     "n_heads": 8,
     "d_model": 512,
     "d_ff": 2048,
-    "pre_layernorm": false,
+    "pre_layernorm": true,
 
     "weight_score": 1.0,
     "weight_pose": 1.0,

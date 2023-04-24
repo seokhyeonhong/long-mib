@@ -14,26 +14,11 @@ from pymovis.motion import Motion, FBX
 from pymovis.vis import AppManager
 from pymovis.ops import rotation, motionops
 
-from utility import testutil
+from utility import utils
 from utility.config import Config
 from utility.dataset import MotionDataset
 from vis.visapp import DetailMotionApp
 from model.gan import TwoStageGAN
-
-def get_motion_and_trajectory(motion, skeleton, v_forward):
-    B, T, D = motion.shape
-
-    # motion
-    local_R6, root_p = torch.split(motion, [D-3, 3], dim=-1)
-    _, global_p = motionops.R6_fk(local_R6.reshape(B, T, -1, 6), root_p, skeleton)
-
-    # trajectory
-    root_xz = root_p[..., (0, 2)]
-    root_fwd = torch.matmul(rotation.R6_to_R(local_R6[..., :6]), v_forward)
-    root_fwd = F.normalize(root_fwd * torchconst.XZ(motion.device), dim=-1)
-    traj = torch.cat([root_xz, root_fwd], dim=-1)
-
-    return local_R6.reshape(B, T, -1, 6), global_p.reshape(B, T, -1, 3), traj
 
 if __name__ == "__main__":
     # initial settings
@@ -55,7 +40,7 @@ if __name__ == "__main__":
     # model
     print("Initializing model...")
     model = TwoStageGAN(dataset.shape[-1], config).to(device)
-    testutil.load_model(model, config)
+    utils.load_model(model, config)
     model.eval()
 
     # character
@@ -70,7 +55,10 @@ if __name__ == "__main__":
             B, T, D = GT_motion.shape
 
             """ 2. GT motion data """
-            GT_local_R6, GT_global_p, GT_traj = get_motion_and_trajectory(GT_motion, skeleton, v_forward)
+            GT_local_R6, GT_global_p, GT_traj = utils.get_motion_and_trajectory(GT_motion, skeleton, v_forward)
+
+            """ 3. Modify trajectory """
+            # GT_traj = utils.get_interpolated_trajectory(GT_traj, config.context_frames)
 
             """ 4. Generate """
             # forward
@@ -81,8 +69,8 @@ if __name__ == "__main__":
             ctx_motion = ctx_motion * motion_std + motion_mean
             det_motion = det_motion * motion_std + motion_mean
 
-            ctx_local_R6, ctx_global_p, ctx_traj = get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
-            det_local_R6, det_global_p, det_traj = get_motion_and_trajectory(det_motion, skeleton, v_forward)
+            ctx_local_R6, ctx_global_p, ctx_traj = utils.get_motion_and_trajectory(ctx_motion, skeleton, v_forward)
+            det_local_R6, det_global_p, det_traj = utils.get_motion_and_trajectory(det_motion, skeleton, v_forward)
 
             # animation
             GT_local_R = rotation.R6_to_R(GT_local_R6).reshape(B*T, -1, 3, 3)

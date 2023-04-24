@@ -19,27 +19,6 @@ from utility.config import Config
 from model.gan import TwoStageGAN
 from utility import trainutil, loss
 
-def get_motion_and_trajectory(motion, skeleton, v_forward):
-    B, T, D = motion.shape
-
-    # motion
-    local_R6, root_p = torch.split(motion, [D-3, 3], dim=-1)
-    _, global_p = motionops.R6_fk(local_R6.reshape(B, T, -1, 6), root_p, skeleton)
-
-    # trajectory
-    root_xz = root_p[..., (0, 2)]
-    root_fwd = torch.matmul(rotation.R6_to_R(local_R6[..., :6]), v_forward)
-    root_fwd = F.normalize(root_fwd * torchconst.XZ(motion.device), dim=-1)
-    traj = torch.cat([root_xz, root_fwd], dim=-1)
-
-    return local_R6.reshape(B, T, -1, 6), global_p.reshape(B, T, -1, 3), traj
-
-def get_velocity_and_contact(global_p, joint_ids, threshold):
-    feet_v = global_p[:, 1:, joint_ids] - global_p[:, :-1, joint_ids]
-    feet_v = torch.sum(feet_v**2, dim=-1) # squared norm
-    feet_v = torch.cat([feet_v[:, 0:1], feet_v], dim=1)
-    contact = (feet_v < threshold).float()
-    return feet_v, contact
 
 if __name__ == "__main__":
     # initial settings
@@ -121,8 +100,8 @@ if __name__ == "__main__":
             fake_ctx_short, fake_ctx_long, fake_det_short, fake_det_long = model.discriminate(ctx_motion.detach(), det_motion.detach())
 
             # loss
-            loss_ctx = loss.discriminator_loss(real_ctx_short, fake_ctx_short) + loss.discriminator_loss(real_ctx_long, fake_ctx_long)
-            loss_det = loss.discriminator_loss(real_det_short, fake_det_short) + loss.discriminator_loss(real_det_long, fake_det_long)
+            loss_ctx = config.weight_adv * (loss.discriminator_loss(real_ctx_short, fake_ctx_short) + loss.discriminator_loss(real_ctx_long, fake_ctx_long))
+            loss_det = config.weight_adv * (loss.discriminator_loss(real_det_short, fake_det_short) + loss.discriminator_loss(real_det_long, fake_det_long))
             loss_disc = loss_ctx + loss_det
             
             # backward
@@ -277,7 +256,7 @@ if __name__ == "__main__":
                     val_loss_dict[k] /= len(val_dataloader)
                 
                 # write and print log
-                trainutil.write_log(writer, val_loss_dict, config.val_interval, iter, train=False)
+                trainutil.write_log(writer, val_loss_dict, 1, iter, train=False)
                 tqdm.write(f"Validation at Iter {iter} | Total: {val_loss_dict['total']:.4f} | Context: {val_loss_dict['ctx']:.4f} | Detail: {val_loss_dict['det']:.4f}")
 
                 # train mode

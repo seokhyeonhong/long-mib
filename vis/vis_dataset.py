@@ -14,6 +14,7 @@ from pymovis.ops import rotation
 
 from utility.config import Config
 from utility.dataset import MotionDataset
+from utility import utils
 from vis.visapp import SingleMotionApp
 
 class DatasetApp(MotionApp):
@@ -57,21 +58,28 @@ class DatasetApp(MotionApp):
             self.prob_idx -= 1
 
 if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     config = Config.load("configs/context.json")
-    character = FBX("dataset/ybot.fbx")
-    dataset = MotionDataset(train=False, config=config)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
 
+    dataset = MotionDataset(train=False, config=config)
+    v_forward = torch.from_numpy(config.v_forward).to(device)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
     skeleton = dataset.skeleton
 
-    for feature in dataloader:
-        # feature = feature[:, :41]
-        B, T, D = feature.shape
+    character = FBX("dataset/ybot.fbx")
 
-        local_R6, root_p, traj = torch.split(feature, [D-6, 3, 3], dim=-1)
-        local_R = rotation.R6_to_R(local_R6.reshape(B, T, -1, 6))
+    for GT_motion in dataloader:
+        """ 1. GT motion data """
+        B, T, D = GT_motion.shape
+        GT_motion = GT_motion.to(device)
+        # GT_local_R6, GT_global_p, GT_traj = utils.get_motion_and_trajectory(GT_motion, skeleton, v_forward)
+        GT_local_R6, GT_root_p = torch.split(GT_motion, [D-3, 3], dim=-1)
+        GT_local_R = rotation.R6_to_R(GT_local_R6.reshape(B, T, -1, 6))
 
-        motion = Motion.from_torch(skeleton, local_R.reshape(B*T, -1, 3, 3), root_p.reshape(B*T, 3))
+        """ 2. Animation """
+        motion = Motion.from_torch(skeleton, GT_local_R.reshape(B*T, -1, 3, 3), GT_root_p.reshape(B*T, 3))
+
+        """ 3. Visualization """
         app_manager = AppManager()
         app = SingleMotionApp(motion, character.model(), T)
         app_manager.run(app)
