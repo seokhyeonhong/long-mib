@@ -18,12 +18,12 @@ from utility import utils
 from utility.config import Config
 from utility.dataset import MotionDataset
 from vis.visapp import ContextMotionApp
-from model.contextual import ContextualTransformer
+from model.contextual import ContextualTransformer, ContextualGAN
 
 if __name__ == "__main__":
     # initial settings
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = Config.load("configs/contextual.json")
+    config = Config.load("configs/contextual_gan.json")
     util.seed()
 
     # dataset
@@ -39,7 +39,7 @@ if __name__ == "__main__":
 
     # model
     print("Initializing model...")
-    model = ContextualTransformer(dataset.shape[-1], config, is_context=True).to(device)
+    model = ContextualGAN(dataset.shape[-1], config, is_context=True).to(device)
     utils.load_model(model, config)
     model.eval()
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     with torch.no_grad():
         for GT_motion in tqdm(dataloader):
             """ 1. Max transition length """
-            T = config.context_frames + config.max_transition*2 + 1
+            T = config.context_frames + config.max_transition + 1
             GT_motion = GT_motion[:, :T, :].to(device)
             B, T, D = GT_motion.shape
 
@@ -63,7 +63,7 @@ if __name__ == "__main__":
             """ 4. Generate """
             # normalize - forward - denormalize
             GT_batch = (GT_motion - motion_mean) / motion_std
-            ctx_motion, _ = model.forward(GT_batch, GT_traj)
+            ctx_motion, _ = model.generate(GT_batch, GT_traj)
             ctx_motion = ctx_motion * motion_std + motion_mean
 
             ctx_local_R6, ctx_global_p, ctx_traj = utils.get_motion_and_trajectory(ctx_motion, skeleton, v_forward)

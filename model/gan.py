@@ -380,7 +380,7 @@ class PatchDiscriminator(nn.Module):
 
         # short discriminator
         self.short_discriminator = nn.Sequential(
-            nn.Conv1d(self.d_motion, self.d_model, kernel_size=5),
+            nn.Conv1d(self.d_motion, self.d_model, kernel_size=2),
             nn.LeakyReLU(),
             nn.Conv1d(self.d_model, self.d_model, kernel_size=1),
             nn.LeakyReLU(),
@@ -390,7 +390,7 @@ class PatchDiscriminator(nn.Module):
 
         # long discriminator
         self.long_discriminator = nn.Sequential(
-            nn.Conv1d(self.d_motion, self.d_model, kernel_size=15),
+            nn.Conv1d(self.d_motion, self.d_model, kernel_size=10),
             nn.LeakyReLU(),
             nn.Conv1d(self.d_model, self.d_model, kernel_size=1),
             nn.LeakyReLU(),

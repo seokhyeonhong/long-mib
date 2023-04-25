@@ -56,6 +56,8 @@ def get_noam_scheduler(config, optim):
     return torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=_lr_lambda)
 
 def write_log(writer, loss_dict, interval, iter, elapsed=None, train=True):
+    if not train:
+        tqdm.write("==============================================")
     msg = f"{'Train' if train else 'Val'} at {iter}: "
     for key, value in loss_dict.items():
         writer.add_scalar(f"{'train' if train else 'val'}/{key}", value / interval, iter)
@@ -63,6 +65,8 @@ def write_log(writer, loss_dict, interval, iter, elapsed=None, train=True):
     if elapsed is not None:
         msg += f"Time: {(elapsed / 60):.2f} min"
     tqdm.write(msg)
+    if not train:
+        tqdm.write("==============================================")
 
 def reset_log(loss_dict):
     for key in loss_dict.keys():
