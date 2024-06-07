@@ -1,0 +1,9 @@
+dataset_dir: "dataset/lafan1"
+
+window_length: 101
+window_offset: 20
+context_frames: 10
+
+batch_size: 64
+contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
+contact_threshold: 2e-4

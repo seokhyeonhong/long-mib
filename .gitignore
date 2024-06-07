@@ -1,0 +1,10 @@
+*.sh
+_*.py
+*.txt
+
+eval/qual
+dataset/*
+
+save
+qual-results
+capture

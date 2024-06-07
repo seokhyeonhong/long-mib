@@ -1,0 +1,39 @@
+dataset_dir: "dataset/lafan1"
+
+window_length: 101
+window_offset: 20
+context_frames: 10
+
+use_phase: true
+use_traj: false
+use_score: true
+
+save_dir: "save/lafan1/KeyframeNet-NoTraj"
+save_interval: 50
+val_interval: 10
+
+batch_size: 64
+epochs: 500
+warmup_iters: 8000
+min_trans: 5
+max_trans: 90
+midway_amount: 0.1
+midway_prob: 0.5
+d_mask: 1
+n_layer: 6
+n_head: 8
+d_model: 512
+d_head: 64
+d_pff_inner: 512
+d_encoder_h: 512
+d_decoder_h: 512
+d_gating_h: 512
+dropout: 0.0
+pre_lnorm: true
+atten_bias: false
+
+weight_rot: 1.0
+weight_pos: 1.0
+weight_phase: 0.5
+weight_traj: 0.5
+weight_score: 1.0

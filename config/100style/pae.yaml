@@ -1,0 +1,15 @@
+dataset_dir: "dataset/100style"
+window_length: 61 # 61 when fbx
+window_offset: 1
+
+epochs: 30
+batch_size: 256
+lr: 1e-4
+
+weight_decay: 1e-4
+restart_period: 10
+restart_mult: 2
+
+phase_channels: 8
+
+save_dir: "save/100style/PAE"

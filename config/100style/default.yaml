@@ -1,0 +1,9 @@
+dataset_dir: "dataset/100style"
+
+window_length: 101
+window_offset: 50
+context_frames: 10
+
+batch_size: 64
+contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
+contact_threshold: 2e-4

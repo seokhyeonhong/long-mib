@@ -1,0 +1,42 @@
+dataset_dir: "dataset/lafan1"
+
+window_length: 101
+window_offset: 20
+context_frames: 10
+
+use_phase: false
+use_traj: false
+use_score: false
+
+save_dir: "save/lafan1/DetailTransformer"
+save_interval: 50
+val_interval: 10
+
+batch_size: 64
+epochs: 1000
+warmup_iters: 8000
+
+min_trans: 5
+max_trans: 90
+contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
+contact_threshold: 2e-4
+midway_amount: 0.1
+midway_prob: 0.5
+
+d_mask: 1
+n_layer: 6
+n_head: 8
+d_model: 512
+d_head: 64
+d_pff_inner: 512
+d_encoder_h: 512
+d_decoder_h: 512
+dropout: 0.0
+pre_lnorm: true
+atten_bias: false
+residual: false
+
+weight_rot: 1.0
+weight_pos: 2.0
+weight_contact: 0.05
+weight_foot: 0.05
