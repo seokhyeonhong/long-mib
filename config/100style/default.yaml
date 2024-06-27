@@ -1,6 +1,7 @@
 dataset_dir: "dataset/100style"
 
-window_length: 101
+window_length: 131
+# window_length: 101
 window_offset: 50
 context_frames: 10
 

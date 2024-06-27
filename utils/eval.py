@@ -327,6 +327,8 @@ def _ours_transition(config,
             keyframes = ops.get_keyframes_by_topk(config, pred_score, top=kf_sampling[1])
         elif kf_sampling[0] == "random":
             keyframes = ops.get_keyframes_by_random(config, pred_score, prob=kf_sampling[1])
+        elif kf_sampling[0] == "uniform":
+            keyframes = ops.get_keyframes_by_uniform(config, pred_score, step=kf_sampling[1])
         else:
             raise NotImplementedError(f"Invalid keyframe sampling method: {kf_sampling}")
         for b in range(motion.shape[0]):

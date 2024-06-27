@@ -189,6 +189,16 @@ def get_keyframes_by_random(config, score, prob=0.1):
         res.append(keyframes)
     return res
 
+def get_keyframes_by_uniform(config, score, step=1):
+    B, T, _ = score.shape
+    res = []
+    for b in range(B):
+        keyframes = list(range(config.context_frames - 1, T, step))
+        if keyframes[-1] != T-1:
+            keyframes.append(T-1)
+        res.append(keyframes)
+    return res
+
 def interpolate_motion_by_keyframes(motion, keyframes):
     B, T, D = motion.shape
     device = motion.device

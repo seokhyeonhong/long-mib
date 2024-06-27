@@ -1,0 +1,36 @@
+dataset_dir: "dataset/lafan1"
+
+window_length: 101
+window_offset: 20
+context_frames: 10
+
+save_dir: "save/lafan1/RSMT-CVAE"
+save_interval: 50
+val_interval: 10
+
+batch_size: 64
+epochs: 500
+lr: 1e-4
+beta1: 0.5
+beta2: 0.9
+
+# min_trans: 5
+# max_trans: 90
+contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
+contact_threshold: 2e-4
+
+# CVAE
+d_hidden: 512
+d_latent: 256
+num_expert: 8
+
+# d_lstm_hidden: 512
+# d_lstm_layers: 1
+# d_dec_hidden1: 512
+# d_dec_hidden2: 256
+# d_disc_hidden1: 512
+# d_disc_hidden2: 256
+# target_std: 0.5
+
+weight_kl: 0.001
+weight_foot: 1.0

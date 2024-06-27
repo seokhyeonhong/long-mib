@@ -1,5 +1,6 @@
 *.sh
 _*.py
+*.pyc
 *.txt
 
 eval/qual

@@ -1,5 +1,6 @@
 dataset_dir: "dataset/lafan1"
 
+# window_length: 131
 window_length: 101
 window_offset: 20
 context_frames: 10

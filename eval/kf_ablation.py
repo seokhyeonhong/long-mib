@@ -43,17 +43,18 @@ if __name__ =="__main__":
         threshold = [0.68, 0.68]
         topk = [3, 4]
         random = [0.05, 0.05]
-    elif args.dataset == "human36m":
-        threshold = [0.72, 0.71]
-        topk = [3, 4]
-        random = [0.05, 0.05]
+    # elif args.dataset == "human36m":
+    #     threshold = [0.72, 0.71]
+    #     topk = [3, 4]
+    #     random = [0.05, 0.05]
     for tidx, trans in enumerate(tqdm(transitions)):
         num_frames = evaluator.config.context_frames + trans + 1
         motion_list, contact_list = [], []
         tags, skeleton = None, None
-        for kf_sampling in [["topk", topk[tidx]]]:
+        # for kf_sampling in [["topk", topk[tidx]]]:
         # for kf_sampling in [["score", None]]:
         # for kf_sampling in [["threshold", threshold[tidx]], ["topk", topk[tidx]], ["random", random[tidx]]]:
+        for kf_sampling in [["uniform", 20]]:#, ["uniform", 10]]:
             n_batch, n_kf = 0, 0
             for idx, res in enumerate(evaluator.eval(num_frames, kf_sampling)):
                 motion_list.append(res["motions"])
@@ -101,6 +102,8 @@ if __name__ =="__main__":
         results["l2q"].append(l2q_list)
         results["npss"].append(npss_list)
         results["foot skate"].append(fs_list)
+
+    print(results)
 
     # save in text for latex table
     def get_row(method, metric, idx):

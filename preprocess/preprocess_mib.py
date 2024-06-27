@@ -302,38 +302,6 @@ def preprocess(config, dataset, train=True):
         motions = fbx.motions()
         skeleton = fbx.skeleton()
 
-    elif dataset == "human36m":
-        dataset_dir = config.dataset_dir
-        motions = []
-        fps = 30
-        for file in os.listdir(os.path.join(dataset_dir, "train" if train else "test")):
-            path = os.path.join(dataset_dir, "train" if train else "test", file)
-            if file.endswith(".fbx"):
-                fbx_file = agl.FBX(path)
-                motions.extend(fbx_file.motions())
-                fps = fbx_file.fps()
-            elif file.endswith(".bvh"):
-                bvh_file = agl.BVH(path, target_fps=fps, scale=0.1)
-                motions.append(bvh_file.motion())
-        skeleton = motions[0].skeleton
-
-    elif dataset == "mann":
-        # load motions
-        dataset_dir = config.dataset_dir
-        motions = []
-        for file in os.listdir(dataset_dir):
-            if file.endswith(".bvh"):
-                if train and not "003.bvh" in file:
-                    bvh_file = agl.BVH(os.path.join(dataset_dir, file), target_fps=30, scale=0.01)
-                elif not train and "003.bvh" in file:
-                    bvh_file = agl.BVH(os.path.join(dataset_dir, file), target_fps=30, scale=0.01)
-                else:
-                    continue
-
-                motions.append(bvh_file.motion())
-                fps = 30
-        skeleton = motions[0].skeleton
-
     elif dataset == "100style":
         dataset_dir = os.path.join(config.dataset_dir, "train" if train else "test")
         motions = []
@@ -356,7 +324,8 @@ def preprocess(config, dataset, train=True):
     # get features
     local_quats, root_pos, phases = split_features(motions, phases, config.window_length, config.window_offset, fps=fps)
     local_quats, root_pos = align_features(local_quats, root_pos, config.context_frames)
-    kf_scores = get_keyframe_scores(local_quats, root_pos, skeleton, config.context_frames)
+    # kf_scores = get_keyframe_scores(local_quats, root_pos, skeleton, config.context_frames)
+    kf_scores = np.ones((local_quats.shape[0], local_quats.shape[1], 1), dtype=np.float32)
     motion_features, traj_features = get_motion_features(local_quats, root_pos)
 
     # save
@@ -365,10 +334,10 @@ def preprocess(config, dataset, train=True):
     np.savez_compressed(os.path.join(save_dir, f"{'train' if train else 'test'}-{config.npz_path}"), motion=motion_features, phase=phases, traj=traj_features, scores=kf_scores)
     print(f"> Saved {'train' if train else 'test'} dataset (motion: {motion_features.shape}, phase: {phases.shape}, traj: {traj_features.shape}, scores: {kf_scores.shape})")
 
-    # save skeleton
-    if train:
-        with open(os.path.join(config.dataset_dir, "skeleton.pkl"), "wb") as f:
-            pickle.dump(skeleton, f)
+    # # save skeleton
+    # if train:
+    #     with open(os.path.join(config.dataset_dir, "skeleton.pkl"), "wb") as f:
+    #         pickle.dump(skeleton, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
