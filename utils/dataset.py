@@ -72,7 +72,10 @@ class MotionDataset(Dataset):
             mean = torch.load(os.path.join(self.config.dataset_dir, "MIB", "motion_statistics.pth"))["mean"].to(device)
             std = torch.load(os.path.join(self.config.dataset_dir, "MIB", "motion_statistics.pth"))["std"].to(device)
         else:
-            motion = MotionDataset(train=True, config=self.config, verbose=False).motion.to(device)
+            if not self.train:
+                motion = MotionDataset(train=True, config=self.config, verbose=False).motion.to(device)
+            else:
+                motion = self.motion.to(device)
             mean = torch.mean(motion, dim=(0, 1))
             std = torch.std(motion, dim=(0, 1)) + 1e-8
             torch.save({"mean": mean.cpu(), "std": std.cpu()}, os.path.join(self.config.dataset_dir, "MIB", "motion_statistics.pth"))
@@ -83,7 +86,10 @@ class MotionDataset(Dataset):
             mean = torch.load(os.path.join(self.config.dataset_dir, "MIB", "traj_statistics.pth"))["mean"].to(device)
             std = torch.load(os.path.join(self.config.dataset_dir, "MIB", "traj_statistics.pth"))["std"].to(device)
         else:
-            traj = MotionDataset(train=True, config=self.config, verbose=False).traj.to(device)
+            if not self.train:
+                traj = MotionDataset(train=True, config=self.config, verbose=False).traj.to(device)
+            else:
+                traj = self.traj.to(device)
             mean = torch.mean(traj, dim=(0, 1))
             std = torch.std(traj, dim=(0, 1)) + 1e-8
             torch.save({"mean": mean.cpu(), "std": std.cpu()}, os.path.join(self.config.dataset_dir, "MIB", "traj_statistics.pth"))
@@ -94,7 +100,10 @@ class MotionDataset(Dataset):
             mean = torch.load(os.path.join(self.config.dataset_dir, "MIB", "l2p_statistics.pth"))["mean"].to(device)
             std = torch.load(os.path.join(self.config.dataset_dir, "MIB", "l2p_statistics.pth"))["std"].to(device)
         else:
-            motion = MotionDataset(train=True, config=self.config, verbose=False).motion
+            if not self.train:
+                motion = MotionDataset(train=True, config=self.config, verbose=False).motion
+            else:
+                motion = self.motion
             dloader = DataLoader(motion, batch_size=self.config.batch_size, shuffle=False)
             global_pos = []
             for batch in dloader:
@@ -117,6 +126,7 @@ class PAEDataset(Dataset):
         self.config = config
 
         # load features
+        print(os.path.join(config.dataset_dir, "PAE", f"{'train' if train else 'test'}-{config.npz_path}"))
         features = np.load(os.path.join(config.dataset_dir, "PAE", f"{'train' if train else 'test'}-{config.npz_path}"))
         self.features = torch.from_numpy(features["motion"]).float() # (B, T, 3J)
 
@@ -138,7 +148,15 @@ class PAEDataset(Dataset):
         return self.features[idx]
     
     def motion_statistics(self, device="cuda"):
-        feat = PAEDataset(train=True, config=self.config).features
-        mean = torch.mean(feat, dim=(0, 1))
-        std = torch.std(feat, dim=(0, 1)) + 1e-8
+        if os.path.exists(os.path.join(self.config.dataset_dir, "PAE", "motion_statistics.pth")):
+            mean = torch.load(os.path.join(self.config.dataset_dir, "PAE", "motion_statistics.pth"))["mean"].to(device)
+            std = torch.load(os.path.join(self.config.dataset_dir, "PAE", "motion_statistics.pth"))["std"].to(device)
+        else:
+            if not self.train:
+                feat = PAEDataset(train=True, config=self.config).features
+            else:
+                feat = self.features
+            mean = torch.mean(feat, dim=(0, 1))
+            std = torch.std(feat, dim=(0, 1)) + 1e-8
+            torch.save({"mean": mean, "std": std}, os.path.join(self.config.dataset_dir, "PAE", "motion_statistics.pth"))
         return mean.to(device), std.to(device)

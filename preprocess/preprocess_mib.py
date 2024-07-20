@@ -316,7 +316,8 @@ def preprocess(config, dataset, train=True):
             # get features
             motions.extend(fbx.motions())
             skeleton = fbx.skeleton()
-            fps = fbx.fps()
+            # fps = fbx.fps()
+            fps = 30
 
     else:
         raise ValueError(f"Invalid dataset: {dataset}")

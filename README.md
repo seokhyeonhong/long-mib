@@ -1,27 +1,51 @@
-# Long-term Motion In-betweening via Keyframe Prediction
+# [SCA 2024] Long-term Motion In-betweening via Keyframe Prediction 
 
-PyTorch implementation of long-term motion in-betweening via keyframe prediciton.
+Long-term Motion In-betweening via Keyframe Prediction 
+
+[Seokhyeon Hong](https://seokhyeonhong.github.io),
+[Haemin Kim](https://www.linkedin.com/in/haem-k/),
+[Kyungmin Cho](https://www.linkedin.com/in/kyungmin-cho-8ba02a208/),
+[Junyong Noh](https://scholar.google.com/citations?user=u75_aBgAAAAJ&hl=en)
+
+SCA 2024
+
+![teaser](assets/teaser.png)
 
 ## Environment Setup
 This repository depends on the [aPyOpenGL](https://github.com/seokhyeonhong/aPyOpenGL) framework.
 Therefore, clone both this repository and aPyOpenGL together:
 ```
-git clone 
+git clone https://github.com/seokhyeonhong/long-mib.git
 git clone https://github.com/seokhyeonhong/aPyOpenGL.git
 ```
 Follow the installation instruction guideline in aPyOpenGL so that the conda environment along with the visualization dependencies can be built.
 Because this process doesn't involve installation of pytorch, install pytorch with a compatible version with your CUDA version.
 
-## Download Dataset
+## Preparing Dataset
 We use the LaFAN1 and 100STYLE datasets retargeted to the Y-Bot.
-To download the datasets, including the motions and the rigged character mesh, execute this command below:
+For your convenience, we provide pre-processed files of the motion datasets saved in the ```npz``` format.
+To download the processed motion features and the rigged character mesh, execute this command below:
 ```
 cd long-mib
-gdown 
-gdown
+gdown --folder 15hIecfW1vFec5wZCQmvRzVZmVtYBT19P
 ```
 
-## Training
+If you need raw fbx files, try this:
+```
+gdown --folder 1yQ-wcmJjDx_fm7tLXGFW5HqYG5SHgitX
+mv ./fbx-dataset ./dataset
+```
+Note that you should change the directory name from ```fbx-datsaet``` to ```dataset``` if you want to try the pre-processing by yourself.
+
+## Pre-trained Weights
+We provide the pre-trained weights of our KeyframeNet and RefineNet.
+To download the files, execute this:
+```
+gdown --folder 1LMqlwOwkTgevo9leIZmhcoyGekakkSLB
+```
+
+## Data Pre-processing and Training
+To train your own weights, you can follow this.
 First, training a periodic autoencoder (PAE) is required.
 The data pre-processing and training are as follows:
 ```
@@ -73,3 +97,6 @@ This will provide visual comparisons of different methods, and you can skip havi
 If you want to see the trajectory editing results, you can put one more option: ```--traj_edit {"scale" | "interp" | "replace" | "random"}```.
 
 If you want to see more options for visualization, such as moving characters horizontally and rendering target frames, click ```Options``` in the pannel.
+
+## Citation
+To-be-updated
